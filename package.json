@@ -1,17 +1,13 @@
 {
-  "name": "@iamevan/nobjc",
+  "name": "objc-js",
   "private": false,
   "access": "public",
   "type": "module",
   "os": [
     "darwin"
   ],
-  "repository": "github:nmggithub/nobjc",
-  "author": {
-    "name": "Noah Gregory",
-    "email": "noah@wts.dev",
-    "url": "https://wts.dev"
-  },
+  "repository": "https://github.com/iamEvanYT/objc-js",
+  "author": "iamEvan",
   "imports": {
     "#nobjc_native": "./build/Release/nobjc_native.node"
   },
@@ -39,7 +35,7 @@
     "make-clangd-config": "node ./scripts/make-clangd-config.js",
     "preinstall-disabled": "npm run build-scripts && npm run make-clangd-config"
   },
-  "version": "0.0.3",
+  "version": "0.0.4",
   "description": "Objective-C bridge for Node.js",
   "main": "dist/index.js",
   "devDependencies": {

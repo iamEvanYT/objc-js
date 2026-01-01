@@ -1,16 +1,16 @@
-# nobjc
+# objc-js
 
 > [!WARNING]
-> Don't use this in production.
+> This is not production ready.
 
-**nobjc** is an Objective-C bridge for Node.js.
+**objc-js** is an Objective-C bridge for Node.js. This is a fork of [nobjc](https://github.com/nmggithub/nobjc) by [Noah Gregory](https://github.com/nmggithub).
 
 ## Usage
 
 ### Basic Usage
 
 ```typescript
-import { NobjcLibrary } from "@iamevan/nobjc";
+import { NobjcLibrary } from "objc-js";
 
 // Load a framework
 const foundation = new NobjcLibrary(
@@ -25,14 +25,14 @@ console.log(str.toString());
 
 ### Protocol Implementation
 
-**nobjc** now supports creating Objective-C protocol implementations from JavaScript. This allows you to create delegate objects that can be passed to Objective-C APIs.
+**objc-js** now supports creating Objective-C protocol implementations from JavaScript. This allows you to create delegate objects that can be passed to Objective-C APIs.
 
 #### Creating a Protocol Implementation
 
 Use `NobjcProtocol.implement()` to create an object that implements a protocol:
 
 ```typescript
-import { NobjcProtocol } from "@iamevan/nobjc";
+import { NobjcProtocol } from "objc-js";
 
 const delegate = NobjcProtocol.implement("ASAuthorizationControllerDelegate", {
   authorizationController$didCompleteWithAuthorization$: (
@@ -77,7 +77,7 @@ Memory is automatically managed:
 #### Example: WebAuthn/Passkeys with AuthenticationServices
 
 ```typescript
-import { NobjcLibrary, NobjcProtocol } from "@iamevan/nobjc";
+import { NobjcLibrary, NobjcProtocol } from "objc-js";
 
 const authServices = new NobjcLibrary(
   "/System/Library/Frameworks/AuthenticationServices.framework/AuthenticationServices"
