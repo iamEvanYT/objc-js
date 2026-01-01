@@ -183,6 +183,9 @@ IMP CreateMethodIMP(Napi::Env env, Napi::Function jsCallback,
 
   // Create a block that will be called when the Objective-C method is invoked
   // We use __block to capture variables that need to be mutable
+  // Make a local copy of selectorName so the block captures an owned copy,
+  // not a dangling reference to the caller's string
+  std::string selectorNameCopy = selectorName;
   id block = ^(id self, ...) {
     // Get the implementation details for this instance
     auto it = g_implementations.find((__bridge void *)self);
@@ -192,10 +195,10 @@ IMP CreateMethodIMP(Napi::Env env, Napi::Function jsCallback,
     }
 
     ProtocolImplementation &impl = it->second;
-    auto callbackIt = impl.callbacks.find(selectorName);
+    auto callbackIt = impl.callbacks.find(selectorNameCopy);
     if (callbackIt == impl.callbacks.end()) {
       NSLog(@"Warning: Callback not found for selector %s",
-            selectorName.c_str());
+            selectorNameCopy.c_str());
       return;
     }
 
@@ -351,7 +354,7 @@ IMP CreateMethodIMP(Napi::Env env, Napi::Function jsCallback,
       callback.Call(jsArgs);
     } catch (const Napi::Error &e) {
       NSLog(@"Error calling JavaScript callback for %s: %s",
-            selectorName.c_str(), e.what());
+            selectorNameCopy.c_str(), e.what());
     }
   };
 
