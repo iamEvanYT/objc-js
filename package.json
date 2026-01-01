@@ -33,7 +33,8 @@
     "test-native": "node ./scripts/test-native-code.js",
     "test-js": "node ./scripts/test-js-code.js",
     "test-string-lifetime": "node ./scripts/test-string-lifetime.js",
-    "test": "npm run test-native && npm run test-js && npm run test-string-lifetime",
+    "test-object-arguments": "node ./scripts/test-object-arguments.js",
+    "test": "npm run test-native && npm run test-js && npm run test-string-lifetime && npm run test-object-arguments",
     "make-clangd-config": "node ./scripts/make-clangd-config.js",
     "preinstall-disabled": "npm run build-scripts && npm run make-clangd-config"
   },
