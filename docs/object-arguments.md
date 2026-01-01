@@ -13,9 +13,7 @@ When calling Objective-C methods that accept object parameters, you need to pass
 ```typescript
 import { NobjcLibrary } from "@iamevan/nobjc";
 
-const foundation = new NobjcLibrary(
-  "/System/Library/Frameworks/Foundation.framework/Foundation"
-);
+const foundation = new NobjcLibrary("/System/Library/Frameworks/Foundation.framework/Foundation");
 const NSString = foundation["NSString"];
 
 const str1 = NSString["stringWithUTF8String:"]("Hello");
@@ -32,7 +30,6 @@ The library automatically unwraps `NobjcObject` Proxy arguments before passing t
 1. **Symbol for Native Access**: A private Symbol (`NATIVE_OBJC_OBJECT`) is used to access the underlying native object from a Proxy.
 
 2. **Unwrapping Function**: Before calling `$msgSend`, all arguments are processed through an `unwrapArg` function that:
-
    - Checks if the argument is a `NobjcObject` Proxy (by testing for the Symbol)
    - Extracts the underlying native `ObjcObject` if it is
    - Returns primitive arguments unchanged
@@ -46,9 +43,7 @@ The library automatically unwraps `NobjcObject` Proxy arguments before passing t
 ```typescript
 import { NobjcLibrary } from "@iamevan/nobjc";
 
-const foundation = new NobjcLibrary(
-  "/System/Library/Frameworks/Foundation.framework/Foundation"
-);
+const foundation = new NobjcLibrary("/System/Library/Frameworks/Foundation.framework/Foundation");
 const NSString = foundation["NSString"];
 
 const str1 = NSString["stringWithUTF8String:"]("Hello");
@@ -68,9 +63,7 @@ console.log(`str1 equals str3: ${isEqual2}`);
 ```typescript
 import { NobjcLibrary } from "@iamevan/nobjc";
 
-const foundation = new NobjcLibrary(
-  "/System/Library/Frameworks/Foundation.framework/Foundation"
-);
+const foundation = new NobjcLibrary("/System/Library/Frameworks/Foundation.framework/Foundation");
 const NSData = foundation["NSData"];
 
 // Create data from a buffer
@@ -85,9 +78,7 @@ console.log(`Created NSData with length: ${data.length()}`);
 ```typescript
 import { NobjcLibrary } from "@iamevan/nobjc";
 
-const foundation = new NobjcLibrary(
-  "/System/Library/Frameworks/Foundation.framework/Foundation"
-);
+const foundation = new NobjcLibrary("/System/Library/Frameworks/Foundation.framework/Foundation");
 const NSMutableArray = foundation["NSMutableArray"];
 const NSString = foundation["NSString"];
 
@@ -113,9 +104,7 @@ console.log(`Array contains str1: ${contains}`);
 ```typescript
 import { NobjcLibrary } from "@iamevan/nobjc";
 
-const foundation = new NobjcLibrary(
-  "/System/Library/Frameworks/Foundation.framework/Foundation"
-);
+const foundation = new NobjcLibrary("/System/Library/Frameworks/Foundation.framework/Foundation");
 const NSMutableDictionary = foundation["NSMutableDictionary"];
 const NSString = foundation["NSString"];
 

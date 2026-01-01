@@ -44,20 +44,12 @@ interface _NSMutableStringConstructor {
 }
 
 describe("NobjcObject Argument Unwrapping Tests", () => {
-  const foundation = new NobjcLibrary(
-    "/System/Library/Frameworks/Foundation.framework/Foundation"
-  );
+  const foundation = new NobjcLibrary("/System/Library/Frameworks/Foundation.framework/Foundation");
 
   const NSString = foundation["NSString"] as unknown as _NSStringConstructor;
-  const NSMutableArray = foundation[
-    "NSMutableArray"
-  ] as unknown as _NSMutableArrayConstructor;
-  const NSMutableDictionary = foundation[
-    "NSMutableDictionary"
-  ] as unknown as _NSMutableDictionaryConstructor;
-  const NSMutableString = foundation[
-    "NSMutableString"
-  ] as unknown as _NSMutableStringConstructor;
+  const NSMutableArray = foundation["NSMutableArray"] as unknown as _NSMutableArrayConstructor;
+  const NSMutableDictionary = foundation["NSMutableDictionary"] as unknown as _NSMutableDictionaryConstructor;
+  const NSMutableString = foundation["NSMutableString"] as unknown as _NSMutableStringConstructor;
 
   describe("String comparison", () => {
     test("should compare equal strings correctly", () => {

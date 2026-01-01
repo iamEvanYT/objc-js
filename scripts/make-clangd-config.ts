@@ -16,24 +16,19 @@ const includePaths = [
   // We need the Node.js headers for Node-API.
   join(execPath, "..", "..", "include", "node"),
   // We need the node-addon-api headers for the C++ bindings that wrap Node-API.
-  join(projectRoot, "node_modules", "node-addon-api"),
+  join(projectRoot, "node_modules", "node-addon-api")
 ];
 for (const path of includePaths) {
   console.log("Adding include path:", path);
 }
 
-
-let flags = [
-  '-std=c++20',
-  '-xobjective-c++',
-  ...includePaths.map(path => `-I${path}`)
-];
+let flags = ["-std=c++20", "-xobjective-c++", ...includePaths.map((path) => `-I${path}`)];
 
 const clangdConfig = `
 CompileFlags:
 \tCompiler: /usr/bin/clang++
 \tAdd:
-${flags.map(flag => `\t\t- ${flag}`).join("\n")}
+${flags.map((flag) => `\t\t- ${flag}`).join("\n")}
 `
   // We use `\t` above for clarity, but clangd needs spaces.
   .replace(/\t/g, "  ")

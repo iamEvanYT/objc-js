@@ -34,14 +34,10 @@ interface _NSNumberConstructor {
 }
 
 describe("Protocol Implementation Tests", () => {
-  const foundation = new NobjcLibrary(
-    "/System/Library/Frameworks/Foundation.framework/Foundation"
-  );
+  const foundation = new NobjcLibrary("/System/Library/Frameworks/Foundation.framework/Foundation");
 
   const NSString = foundation["NSString"] as unknown as _NSStringConstructor;
-  const NSMutableArray = foundation[
-    "NSMutableArray"
-  ] as unknown as _NSMutableArrayConstructor;
+  const NSMutableArray = foundation["NSMutableArray"] as unknown as _NSMutableArrayConstructor;
   const NSNumber = foundation["NSNumber"] as unknown as _NSNumberConstructor;
 
   test("should create protocol implementation with callback", () => {
@@ -54,7 +50,7 @@ describe("Protocol Implementation Tests", () => {
         callbackInvoked = true;
         receivedArg1 = arg1;
         receivedArg2 = arg2;
-      },
+      }
     });
 
     expect(delegate).not.toBeNull();
@@ -62,7 +58,7 @@ describe("Protocol Implementation Tests", () => {
 
   test("should verify delegate is a valid NobjcObject", () => {
     const delegate = NobjcProtocol.implement("TestProtocol", {
-      "testMethod:withArg:": (arg1: any, arg2: any) => {},
+      "testMethod:withArg:": (arg1: any, arg2: any) => {}
     });
 
     const delegateDescription = (delegate as any).description();
@@ -71,12 +67,10 @@ describe("Protocol Implementation Tests", () => {
 
   test("should respond to NSObject methods", () => {
     const delegate = NobjcProtocol.implement("TestProtocol", {
-      "testMethod:withArg:": (arg1: any, arg2: any) => {},
+      "testMethod:withArg:": (arg1: any, arg2: any) => {}
     });
 
-    const respondsToDescription = (delegate as any).respondsToSelector$(
-      "description"
-    );
+    const respondsToDescription = (delegate as any).respondsToSelector$("description");
     expect(respondsToDescription).toBe(true);
   });
 
@@ -87,7 +81,7 @@ describe("Protocol Implementation Tests", () => {
       "compare:": (other: NobjcObject) => {
         comparisonCallCount++;
         return 0; // Equal
-      },
+      }
     });
 
     expect(comparator).not.toBeNull();
@@ -95,11 +89,11 @@ describe("Protocol Implementation Tests", () => {
 
   test("should create multiple protocol implementations", () => {
     const delegate1 = NobjcProtocol.implement("TestProtocol1", {
-      method1: () => {},
+      method1: () => {}
     });
 
     const delegate2 = NobjcProtocol.implement("TestProtocol2", {
-      method2: () => {},
+      method2: () => {}
     });
 
     expect(delegate1).not.toBeNull();
@@ -112,7 +106,7 @@ describe("Protocol Implementation Tests", () => {
     const stringDelegate = NobjcProtocol.implement("StringProtocol", {
       "handleString:": (str: NobjcObject) => {
         receivedString = str.toString();
-      },
+      }
     });
 
     expect(stringDelegate).not.toBeNull();
@@ -126,7 +120,7 @@ describe("Protocol Implementation Tests", () => {
       "handleInt:andBool:": (intVal: number, boolVal: boolean) => {
         receivedInt = intVal;
         receivedBool = boolVal;
-      },
+      }
     });
 
     expect(primitiveDelegate).not.toBeNull();
@@ -134,7 +128,7 @@ describe("Protocol Implementation Tests", () => {
 
   test("should handle $ notation conversion", () => {
     const dollarDelegate = NobjcProtocol.implement("DollarProtocol", {
-      method$with$args$: (arg1: any, arg2: any, arg3: any) => {},
+      method$with$args$: (arg1: any, arg2: any, arg3: any) => {}
     });
 
     expect(dollarDelegate).not.toBeNull();
@@ -143,7 +137,7 @@ describe("Protocol Implementation Tests", () => {
   test("should handle memory management correctly", () => {
     for (let i = 0; i < 10; i++) {
       const tempDelegate = NobjcProtocol.implement("TempProtocol", {
-        tempMethod: () => {},
+        tempMethod: () => {}
       });
       // Let it go out of scope
     }
@@ -162,7 +156,7 @@ describe("Protocol Implementation Tests", () => {
       const copyDelegate = NobjcProtocol.implement("NSCopying", {
         "copyWithZone:": (zone: any) => {
           return null; // Return nil for now
-        },
+        }
       });
 
       expect(copyDelegate).not.toBeNull();

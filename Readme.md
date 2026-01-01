@@ -13,9 +13,7 @@
 import { NobjcLibrary } from "objc-js";
 
 // Load a framework
-const foundation = new NobjcLibrary(
-  "/System/Library/Frameworks/Foundation.framework/Foundation"
-);
+const foundation = new NobjcLibrary("/System/Library/Frameworks/Foundation.framework/Foundation");
 
 // Get a class and call methods
 const NSString = foundation["NSString"];
@@ -35,16 +33,13 @@ Use `NobjcProtocol.implement()` to create an object that implements a protocol:
 import { NobjcProtocol } from "objc-js";
 
 const delegate = NobjcProtocol.implement("ASAuthorizationControllerDelegate", {
-  authorizationController$didCompleteWithAuthorization$: (
-    controller,
-    authorization
-  ) => {
+  authorizationController$didCompleteWithAuthorization$: (controller, authorization) => {
     console.log("Authorization completed successfully!");
     console.log("Authorization:", authorization);
   },
   authorizationController$didCompleteWithError$: (controller, error) => {
     console.error("Authorization failed:", error);
-  },
+  }
 });
 
 // Pass the delegate to an Objective-C API
@@ -85,15 +80,11 @@ const authServices = new NobjcLibrary(
 
 // Create authorization requests
 const ASAuthorizationController = authServices["ASAuthorizationController"];
-const controller =
-  ASAuthorizationController.alloc().initWithAuthorizationRequests$(requests);
+const controller = ASAuthorizationController.alloc().initWithAuthorizationRequests$(requests);
 
 // Create a delegate
 const delegate = NobjcProtocol.implement("ASAuthorizationControllerDelegate", {
-  authorizationController$didCompleteWithAuthorization$: (
-    controller,
-    authorization
-  ) => {
+  authorizationController$didCompleteWithAuthorization$: (controller, authorization) => {
     // Handle successful authorization
     const credential = authorization.credential();
     console.log("Credential:", credential);
@@ -101,7 +92,7 @@ const delegate = NobjcProtocol.implement("ASAuthorizationControllerDelegate", {
   authorizationController$didCompleteWithError$: (controller, error) => {
     // Handle error
     console.error("Authorization error:", error.localizedDescription());
-  },
+  }
 });
 
 // Set the delegate and perform requests

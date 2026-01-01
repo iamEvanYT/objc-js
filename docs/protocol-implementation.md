@@ -32,15 +32,12 @@ Creates a new Objective-C object that implements the specified protocol.
 import { NobjcProtocol } from "@iamevan/nobjc";
 
 const delegate = NobjcProtocol.implement("ASAuthorizationControllerDelegate", {
-  authorizationController$didCompleteWithAuthorization$: (
-    controller,
-    authorization
-  ) => {
+  authorizationController$didCompleteWithAuthorization$: (controller, authorization) => {
     console.log("Authorization completed successfully!");
   },
   authorizationController$didCompleteWithError$: (controller, error) => {
     console.error("Authorization failed:", error);
-  },
+  }
 });
 
 // Use the delegate with an Objective-C API
@@ -155,15 +152,11 @@ const authServices = new NobjcLibrary(
 
 // Create authorization requests
 const ASAuthorizationController = authServices["ASAuthorizationController"];
-const controller =
-  ASAuthorizationController.alloc().initWithAuthorizationRequests$(requests);
+const controller = ASAuthorizationController.alloc().initWithAuthorizationRequests$(requests);
 
 // Create a delegate
 const delegate = NobjcProtocol.implement("ASAuthorizationControllerDelegate", {
-  authorizationController$didCompleteWithAuthorization$: (
-    controller,
-    authorization
-  ) => {
+  authorizationController$didCompleteWithAuthorization$: (controller, authorization) => {
     // Handle successful authorization
     const credential = authorization.credential();
 
@@ -181,7 +174,7 @@ const delegate = NobjcProtocol.implement("ASAuthorizationControllerDelegate", {
   authorizationController$didCompleteWithError$: (controller, error) => {
     // Handle error
     console.error("Authorization error:", error.localizedDescription());
-  },
+  }
 });
 
 // Set the delegate and perform requests

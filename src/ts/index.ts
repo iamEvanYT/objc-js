@@ -1,9 +1,4 @@
-import {
-  LoadLibrary,
-  GetClassObject,
-  ObjcObject,
-  CreateProtocolImplementation,
-} from "./native.js";
+import { LoadLibrary, GetClassObject, ObjcObject, CreateProtocolImplementation } from "./native.js";
 import { NobjcNative } from "./native.js";
 
 const NATIVE_OBJC_OBJECT = Symbol("nativeObjcObject");
@@ -19,7 +14,7 @@ class NobjcLibrary {
           this.wasLoaded = true;
         }
         return new NobjcObject(GetClassObject(className));
-      },
+      }
     };
     return new Proxy({}, handler);
   }
@@ -45,10 +40,7 @@ class NobjcObject {
         // toString is always present
         if (p === "toString") return true;
         // check if the object responds to the selector
-        return target.$msgSend(
-          "respondsToSelector:",
-          NobjcMethodNameToObjcSelector(p.toString())
-        ) as boolean;
+        return target.$msgSend("respondsToSelector:", NobjcMethodNameToObjcSelector(p.toString())) as boolean;
       },
       get(target, methodName: string | symbol, receiver: NobjcObject) {
         // Return the underlying native object when Symbol is accessed
@@ -64,17 +56,12 @@ class NobjcObject {
           return () => String(object.$msgSend("description"));
         }
         if (!(methodName in receiver)) {
-          throw new Error(
-            `Method ${methodName} not found on object ${receiver}`
-          );
+          throw new Error(`Method ${methodName} not found on object ${receiver}`);
         }
         return new NobjcMethod(object, methodName);
-      },
+      }
     };
-    return new Proxy<NobjcNative.ObjcObject>(
-      object,
-      handler
-    ) as unknown as NobjcObject;
+    return new Proxy<NobjcNative.ObjcObject>(object, handler) as unknown as NobjcObject;
   }
 }
 
@@ -103,10 +90,7 @@ class NobjcMethod {
 }
 
 class NobjcProtocol {
-  static implement(
-    protocolName: string,
-    methodImplementations: Record<string, (...args: any[]) => any>
-  ): NobjcObject {
+  static implement(protocolName: string, methodImplementations: Record<string, (...args: any[]) => any>): NobjcObject {
     // Convert method names from $ notation to : notation
     const convertedMethods: Record<string, Function> = {};
     for (const [methodName, impl] of Object.entries(methodImplementations)) {
@@ -116,11 +100,7 @@ class NobjcProtocol {
         const unwrappedArgs = args.map(unwrapArg);
         const result = impl(...unwrappedArgs);
         // If the result is already a NobjcObject, unwrap it to get the native object
-        if (
-          result &&
-          typeof result === "object" &&
-          NATIVE_OBJC_OBJECT in result
-        ) {
+        if (result && typeof result === "object" && NATIVE_OBJC_OBJECT in result) {
           return result[NATIVE_OBJC_OBJECT];
         }
         // If the result is a native ObjcObject, return it as-is
@@ -132,10 +112,7 @@ class NobjcProtocol {
     }
 
     // Call native implementation
-    const nativeObj = CreateProtocolImplementation(
-      protocolName,
-      convertedMethods
-    );
+    const nativeObj = CreateProtocolImplementation(protocolName, convertedMethods);
 
     // Wrap in NobjcObject proxy
     return new NobjcObject(nativeObj);

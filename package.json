@@ -33,17 +33,19 @@
     "test:object-arguments": "bun test tests/test-object-arguments.test.ts",
     "test:protocol-implementation": "bun test tests/test-protocol-implementation.test.ts",
     "make-clangd-config": "node ./scripts/make-clangd-config.js",
+    "format": "prettier --write \"**/*.{ts,js,json,md}\"",
     "preinstall-disabled": "npm run build-scripts && npm run make-clangd-config"
   },
   "version": "0.0.4",
   "description": "Objective-C bridge for Node.js",
   "main": "dist/index.js",
   "devDependencies": {
+    "@types/bun": "latest",
     "@types/node": "^20.0.0",
-    "typescript": "^5.9.3",
     "node-addon-api": "^8.5.0",
     "node-gyp": "^11.4.2",
-    "@types/bun": "latest"
+    "prettier": "^3.7.4",
+    "typescript": "^5.9.3"
   },
   "gypfile": true
 }

@@ -15,9 +15,7 @@ import { NobjcLibrary, NobjcObject } from "../dist/index.js";
  */
 
 describe("String Lifetime Tests", () => {
-  const Foundation = new NobjcLibrary(
-    "/System/Library/Frameworks/Foundation.framework/Foundation"
-  );
+  const Foundation = new NobjcLibrary("/System/Library/Frameworks/Foundation.framework/Foundation");
 
   interface _NSString extends NobjcObject {
     stringWithUTF8String$(str: string): _NSString;
@@ -42,9 +40,7 @@ describe("String Lifetime Tests", () => {
       // Check if the result is null (the bug symptom)
       if (nsString == null) {
         failures++;
-        console.error(
-          `FAIL: Iteration ${i} - stringWithUTF8String$ returned null`
-        );
+        console.error(`FAIL: Iteration ${i} - stringWithUTF8String$ returned null`);
         continue;
       }
 

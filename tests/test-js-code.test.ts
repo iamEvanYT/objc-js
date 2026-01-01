@@ -14,9 +14,7 @@ interface _NSStringConstructor {
 }
 
 describe("JavaScript Code Tests", () => {
-  const Foundation = new NobjcLibrary(
-    "/System/Library/Frameworks/Foundation.framework/Foundation"
-  );
+  const Foundation = new NobjcLibrary("/System/Library/Frameworks/Foundation.framework/Foundation");
 
   const NSString = Foundation.NSString as unknown as _NSStringConstructor;
 
