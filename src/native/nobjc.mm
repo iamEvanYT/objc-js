@@ -1,4 +1,5 @@
 #include "ObjcObject.h"
+#include "protocol-impl.h"
 #include <Foundation/Foundation.h>
 #include <dlfcn.h>
 #include <napi.h>
@@ -34,6 +35,8 @@ Napi::Object InitAll(Napi::Env env, Napi::Object exports) {
   ObjcObject::Init(env, exports);
   exports.Set("LoadLibrary", Napi::Function::New(env, LoadLibrary));
   exports.Set("GetClassObject", Napi::Function::New(env, GetClassObject));
+  exports.Set("CreateProtocolImplementation",
+              Napi::Function::New(env, CreateProtocolImplementation));
   return exports;
 }
 

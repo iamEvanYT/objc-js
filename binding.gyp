@@ -4,7 +4,8 @@
             "target_name": "nobjc_native",
             "sources": [
                 "src/native/nobjc.mm",
-                "src/native/ObjcObject.mm"
+                "src/native/ObjcObject.mm",
+                "src/native/protocol-impl.mm"
             ],
             "defines": [
                 "NODE_ADDON_API_CPP_EXCEPTIONS"

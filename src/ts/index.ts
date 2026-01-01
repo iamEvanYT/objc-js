@@ -1,4 +1,9 @@
-import { LoadLibrary, GetClassObject, ObjcObject } from "./native.js";
+import {
+  LoadLibrary,
+  GetClassObject,
+  ObjcObject,
+  CreateProtocolImplementation,
+} from "./native.js";
 import { NobjcNative } from "./native.js";
 
 const NATIVE_OBJC_OBJECT = Symbol("nativeObjcObject");
@@ -97,4 +102,44 @@ class NobjcMethod {
   }
 }
 
-export { NobjcLibrary, NobjcObject, NobjcMethod };
+class NobjcProtocol {
+  static implement(
+    protocolName: string,
+    methodImplementations: Record<string, (...args: any[]) => any>
+  ): NobjcObject {
+    // Convert method names from $ notation to : notation
+    const convertedMethods: Record<string, Function> = {};
+    for (const [methodName, impl] of Object.entries(methodImplementations)) {
+      const selector = NobjcMethodNameToObjcSelector(methodName);
+      // Wrap the implementation to unwrap args and wrap return values
+      convertedMethods[selector] = function (...args: any[]) {
+        const unwrappedArgs = args.map(unwrapArg);
+        const result = impl(...unwrappedArgs);
+        // If the result is already a NobjcObject, unwrap it to get the native object
+        if (
+          result &&
+          typeof result === "object" &&
+          NATIVE_OBJC_OBJECT in result
+        ) {
+          return result[NATIVE_OBJC_OBJECT];
+        }
+        // If the result is a native ObjcObject, return it as-is
+        if (typeof result === "object" && result instanceof ObjcObject) {
+          return result;
+        }
+        return result;
+      };
+    }
+
+    // Call native implementation
+    const nativeObj = CreateProtocolImplementation(
+      protocolName,
+      convertedMethods
+    );
+
+    // Wrap in NobjcObject proxy
+    return new NobjcObject(nativeObj);
+  }
+}
+
+export { NobjcLibrary, NobjcObject, NobjcMethod, NobjcProtocol };
