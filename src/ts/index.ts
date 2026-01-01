@@ -1,4 +1,4 @@
-import { LoadLibrary, GetClassObject, ObjcObject, CreateProtocolImplementation } from "./native.js";
+import { LoadLibrary, GetClassObject, ObjcObject, GetPointer, CreateProtocolImplementation } from "./native.js";
 import { NobjcNative } from "./native.js";
 
 const NATIVE_OBJC_OBJECT = Symbol("nativeObjcObject");
@@ -119,4 +119,28 @@ class NobjcProtocol {
   }
 }
 
-export { NobjcLibrary, NobjcObject, NobjcMethod, NobjcProtocol };
+/**
+ * Get the raw native pointer for a NobjcObject as a Node Buffer.
+ * The pointer is stored in little-endian format (8 bytes on 64-bit macOS).
+ * 
+ * @param obj - The NobjcObject to get the pointer from
+ * @returns A Buffer containing the pointer address
+ * 
+ * @example
+ * ```typescript
+ * const view = window.contentView();
+ * const pointerBuffer = getPointer(view);
+ * const pointer = pointerBuffer.readBigUInt64LE(0);
+ * console.log(`NSView pointer: 0x${pointer.toString(16)}`);
+ * ```
+ */
+function getPointer(obj: NobjcObject): Buffer {
+  // Unwrap the NobjcObject to get the native ObjcObject
+  if (obj && typeof obj === "object" && NATIVE_OBJC_OBJECT in obj) {
+    const nativeObj = (obj as any)[NATIVE_OBJC_OBJECT];
+    return GetPointer(nativeObj);
+  }
+  throw new TypeError("Argument must be a NobjcObject instance");
+}
+
+export { NobjcLibrary, NobjcObject, NobjcMethod, NobjcProtocol, getPointer };

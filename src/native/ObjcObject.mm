@@ -12,6 +12,7 @@ void ObjcObject::Init(Napi::Env env, Napi::Object exports) {
       DefineClass(env, "ObjcObject",
                   {
                       InstanceMethod("$msgSend", &ObjcObject::$MsgSend),
+                      InstanceMethod("$getPointer", &ObjcObject::GetPointer),
                   });
   constructor = Napi::Persistent(func);
   constructor.SuppressDestruct();
@@ -128,4 +129,22 @@ Napi::Value ObjcObject::$MsgSend(const Napi::CallbackInfo &info) {
   [invocation invoke];
   // storedArgs goes out of scope here, after invoke has completed
   return ConvertReturnValueToJSValue(env, invocation, methodSignature);
+}
+
+Napi::Value ObjcObject::GetPointer(const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
+  
+  // Get the pointer value of the Objective-C object
+  uintptr_t ptrValue = reinterpret_cast<uintptr_t>(objcObject);
+  
+  // Create a Buffer to hold the pointer (8 bytes on 64-bit macOS)
+  Napi::Buffer<uint8_t> buffer = Napi::Buffer<uint8_t>::New(env, sizeof(void*));
+  
+  // Write the pointer value to the buffer in little-endian format
+  uint8_t* data = buffer.Data();
+  for (size_t i = 0; i < sizeof(void*); ++i) {
+    data[i] = static_cast<uint8_t>((ptrValue >> (i * 8)) & 0xFF);
+  }
+  
+  return buffer;
 }

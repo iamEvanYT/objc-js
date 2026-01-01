@@ -28,6 +28,7 @@ public:
 
 private:
   Napi::Value $MsgSend(const Napi::CallbackInfo &info);
+  Napi::Value GetPointer(const Napi::CallbackInfo &info);
 };
 
 #endif // OBJCOBJECT_H
