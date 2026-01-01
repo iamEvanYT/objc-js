@@ -26,7 +26,8 @@ using BaseObjcType = std::variant<char,               // c
                                   std::string,        // * (c type: char *)
                                   id,                 // @
                                   Class,              // #
-                                  SEL                 // :
+                                  SEL,                // :
+                                  void *              // ^ (pointer)
                                   >;
 using ObjcType = std::variant<BaseObjcType, BaseObjcType *>;
 
@@ -41,6 +42,10 @@ struct SetObjCArgumentVisitor {
 
   void operator()(std::monostate) const {
     // void type, do nothing.
+  }
+
+  void operator()(void *ptr) const {
+    [invocation setArgument:&ptr atIndex:index];
   }
 
   template <typename T> void operator()(T v) const {
@@ -265,6 +270,21 @@ inline auto AsObjCArgument(const Napi::Value &value, const char *typeEncoding,
     return ConvertToNativeValue<SEL>(value, context);
   case '@':
     return ConvertToNativeValue<id>(value, context);
+  case '^': // Pointer type (^v, ^c, etc.)
+    if (value.IsBuffer()) {
+      Napi::Buffer<uint8_t> buffer = value.As<Napi::Buffer<uint8_t>>();
+      return static_cast<void *>(buffer.Data());
+    }
+    if (value.IsTypedArray()) {
+      Napi::TypedArray typedArray = value.As<Napi::TypedArray>();
+      return static_cast<void *>(
+          reinterpret_cast<uint8_t *>(typedArray.ArrayBuffer().Data()) +
+          typedArray.ByteOffset());
+    }
+    if (value.IsNull() || value.IsUndefined()) {
+      return static_cast<void *>(nullptr);
+    }
+    return std::nullopt;
   }
   return std::nullopt;
 }
