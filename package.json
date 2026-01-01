@@ -30,12 +30,12 @@
     "prebuild": "node-gyp clean && node-gyp configure",
     "build": "npm run build-native && npm run build-scripts && npm run build-source",
     "pretest": "npm run build",
-    "test-native": "node ./scripts/test-native-code.js",
-    "test-js": "node ./scripts/test-js-code.js",
-    "test-string-lifetime": "node ./scripts/test-string-lifetime.js",
-    "test-object-arguments": "node ./scripts/test-object-arguments.js",
-    "test-protocol-implementation": "node ./scripts/test-protocol-implementation.js",
-    "test": "npm run test-native && npm run test-js && npm run test-string-lifetime && npm run test-object-arguments && npm run test-protocol-implementation",
+    "test": "bun test",
+    "test:native": "bun test tests/test-native-code.test.ts",
+    "test:js": "bun test tests/test-js-code.test.ts",
+    "test:string-lifetime": "bun test tests/test-string-lifetime.test.ts",
+    "test:object-arguments": "bun test tests/test-object-arguments.test.ts",
+    "test:protocol-implementation": "bun test tests/test-protocol-implementation.test.ts",
     "make-clangd-config": "node ./scripts/make-clangd-config.js",
     "preinstall-disabled": "npm run build-scripts && npm run make-clangd-config"
   },
@@ -46,7 +46,8 @@
     "@types/node": "^20.0.0",
     "typescript": "^5.9.3",
     "node-addon-api": "^8.5.0",
-    "node-gyp": "^11.4.2"
+    "node-gyp": "^11.4.2",
+    "@types/bun": "latest"
   },
   "gypfile": true
 }
