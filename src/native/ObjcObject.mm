@@ -3,6 +3,7 @@
 #include <Foundation/Foundation.h>
 #include <napi.h>
 #include <objc/objc.h>
+#include <vector>
 
 Napi::FunctionReference ObjcObject::constructor;
 
@@ -87,6 +88,13 @@ Napi::Value ObjcObject::$MsgSend(const Napi::CallbackInfo &info) {
   [invocation setSelector:selector];
   [invocation setTarget:objcObject];
 
+  // Store all arguments to keep them alive until after invoke.
+  // This is critical for string arguments where we pass a pointer to the
+  // internal buffer of a std::string - if the string is destroyed before
+  // invoke, the pointer becomes dangling.
+  std::vector<ObjcType> storedArgs;
+  storedArgs.reserve(info.Length() - 1);
+
   for (size_t i = 1; i < info.Length(); ++i) {
     const ObjcArgumentContext context = {
         .className = std::string(object_getClassName(objcObject)),
@@ -103,6 +111,7 @@ Napi::Value ObjcObject::$MsgSend(const Napi::CallbackInfo &info) {
       Napi::TypeError::New(env, errorMessage).ThrowAsJavaScriptException();
       return env.Null();
     }
+    storedArgs.push_back(std::move(*arg));
     std::visit(
         [&](auto &&outer) {
           using OuterT = std::decay_t<decltype(outer)>;
@@ -113,9 +122,10 @@ Napi::Value ObjcObject::$MsgSend(const Napi::CallbackInfo &info) {
               std::visit(SetObjCArgumentVisitor{invocation, i + 1}, *outer);
           }
         },
-        *arg);
+        storedArgs.back());
   }
 
   [invocation invoke];
+  // storedArgs goes out of scope here, after invoke has completed
   return ConvertReturnValueToJSValue(env, invocation, methodSignature);
 }

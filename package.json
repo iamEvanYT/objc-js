@@ -1,47 +1,50 @@
 {
-    "name": "nobjc",
-    "type": "module",
-    "os": [
-        "darwin"
-    ],
-    "repository": "github:nmggithub/nobjc",
-    "author": {
-        "name": "Noah Gregory",
-        "email": "noah@wts.dev",
-        "url": "https://wts.dev"
-    },
-    "imports": {
-        "#nobjc_native": "./build/Release/nobjc_native.node"
-    },
-    "exports": {
-        ".": "./dist/index.js",
-        "./native": "./build/Release/nobjc_native.node"
-    },
-    "files": [
-        "dist/",
-        "build/Release/nobjc_native.node"
-    ],
-    "scripts": {
-        "build-native": "node-gyp build",
-        "build-scripts": "tsc --project scripts/tsconfig.json",
-        "build-source": "tsc --project src/ts/tsconfig.json",
-        "prebuild": "node-gyp clean && node-gyp configure",
-        "build": "npm run build-native && npm run build-scripts && npm run build-source",
-        "pretest": "npm run build",
-        "test-native": "node ./scripts/test-native-code.js",
-        "test-js": "node ./scripts/test-js-code.js",
-        "test": "npm run test-native && npm run test-js",
-        "make-clangd-config": "node ./scripts/make-clangd-config.js",
-        "preinstall": "npm run build-scripts && npm run make-clangd-config"
-    },
-    "version": "0.0.1",
-    "description": "Objective-C bridge for Node.js",
-    "main": "dist/index.js",
-    "devDependencies": {
-        "@types/node": "^20.0.0",
-        "typescript": "^5.9.3",
-        "node-addon-api": "^8.5.0",
-        "node-gyp": "^11.4.2"
-    },
-    "gypfile": true
+  "name": "@iamevan/nobjc",
+  "private": false,
+  "access": "public",
+  "type": "module",
+  "os": [
+    "darwin"
+  ],
+  "repository": "github:nmggithub/nobjc",
+  "author": {
+    "name": "Noah Gregory",
+    "email": "noah@wts.dev",
+    "url": "https://wts.dev"
+  },
+  "imports": {
+    "#nobjc_native": "./build/Release/nobjc_native.node"
+  },
+  "exports": {
+    ".": "./dist/index.js",
+    "./native": "./build/Release/nobjc_native.node"
+  },
+  "files": [
+    "dist/",
+    "build/Release/nobjc_native.node"
+  ],
+  "scripts": {
+    "build-native": "node-gyp build",
+    "build-scripts": "tsc --project scripts/tsconfig.json",
+    "build-source": "tsc --project src/ts/tsconfig.json",
+    "prebuild": "node-gyp clean && node-gyp configure",
+    "build": "npm run build-native && npm run build-scripts && npm run build-source",
+    "pretest": "npm run build",
+    "test-native": "node ./scripts/test-native-code.js",
+    "test-js": "node ./scripts/test-js-code.js",
+    "test-string-lifetime": "node ./scripts/test-string-lifetime.js",
+    "test": "npm run test-native && npm run test-js && npm run test-string-lifetime",
+    "make-clangd-config": "node ./scripts/make-clangd-config.js",
+    "preinstall-disabled": "npm run build-scripts && npm run make-clangd-config"
+  },
+  "version": "0.0.1",
+  "description": "Objective-C bridge for Node.js",
+  "main": "dist/index.js",
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.9.3",
+    "node-addon-api": "^8.5.0",
+    "node-gyp": "^11.4.2"
+  },
+  "gypfile": true
 }
