@@ -38,7 +38,7 @@
     "make-clangd-config": "node ./scripts/make-clangd-config.js",
     "preinstall-disabled": "npm run build-scripts && npm run make-clangd-config"
   },
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "Objective-C bridge for Node.js",
   "main": "dist/index.js",
   "devDependencies": {
