@@ -1,4 +1,11 @@
-import { LoadLibrary, GetClassObject, ObjcObject, GetPointer, CreateProtocolImplementation } from "./native.js";
+import {
+  LoadLibrary,
+  GetClassObject,
+  ObjcObject,
+  GetPointer,
+  FromPointer,
+  CreateProtocolImplementation
+} from "./native.js";
 import { NobjcNative } from "./native.js";
 
 const NATIVE_OBJC_OBJECT = Symbol("nativeObjcObject");
@@ -58,7 +65,7 @@ class NobjcObject {
         if (!(methodName in receiver)) {
           throw new Error(`Method ${methodName} not found on object ${receiver}`);
         }
-        return new NobjcMethod(object, methodName);
+        return NobjcMethod(object, methodName);
       }
     };
     return new Proxy<NobjcNative.ObjcObject>(object, handler) as unknown as NobjcObject;
@@ -72,22 +79,25 @@ function unwrapArg(arg: any): any {
   return arg;
 }
 
-class NobjcMethod {
-  constructor(object: NobjcNative.ObjcObject, methodName: string) {
-    const selector = NobjcMethodNameToObjcSelector(methodName);
-    // This cannot be an arrow function because we need to access `arguments`.
-    function methodFunc(): any {
-      const unwrappedArgs = Array.from(arguments).map(unwrapArg);
-      const result = object.$msgSend(selector, ...unwrappedArgs);
-      if (typeof result == "object" && result instanceof ObjcObject) {
-        return new NobjcObject(result);
-      }
-      return result;
-    }
-    const handler: ProxyHandler<any> = {};
-    return new Proxy(methodFunc, handler);
-  }
+interface NobjcMethod {
+  (...args: any[]): any;
 }
+
+// Note: This is actually a factory function that returns a callable Proxy
+const NobjcMethod = function (object: NobjcNative.ObjcObject, methodName: string): NobjcMethod {
+  const selector = NobjcMethodNameToObjcSelector(methodName);
+  // This cannot be an arrow function because we need to access `arguments`.
+  function methodFunc(): any {
+    const unwrappedArgs = Array.from(arguments).map(unwrapArg);
+    const result = object.$msgSend(selector, ...unwrappedArgs);
+    if (typeof result == "object" && result instanceof ObjcObject) {
+      return new NobjcObject(result);
+    }
+    return result;
+  }
+  const handler: ProxyHandler<any> = {};
+  return new Proxy(methodFunc, handler) as NobjcMethod;
+};
 
 class NobjcProtocol {
   static implement(protocolName: string, methodImplementations: Record<string, (...args: any[]) => any>): NobjcObject {
@@ -122,10 +132,10 @@ class NobjcProtocol {
 /**
  * Get the raw native pointer for a NobjcObject as a Node Buffer.
  * The pointer is stored in little-endian format (8 bytes on 64-bit macOS).
- * 
+ *
  * @param obj - The NobjcObject to get the pointer from
  * @returns A Buffer containing the pointer address
- * 
+ *
  * @example
  * ```typescript
  * const view = window.contentView();
@@ -143,4 +153,39 @@ function getPointer(obj: NobjcObject): Buffer {
   throw new TypeError("Argument must be a NobjcObject instance");
 }
 
-export { NobjcLibrary, NobjcObject, NobjcMethod, NobjcProtocol, getPointer };
+/**
+ * Create a NobjcObject from a raw native pointer.
+ *
+ * @param pointer - A Buffer or BigInt containing the pointer address
+ * @returns A NobjcObject wrapping the native object
+ *
+ * @example
+ * ```typescript
+ * // From a Buffer
+ * const pointerBuffer = getPointer(originalObject);
+ * const reconstructed = fromPointer(pointerBuffer);
+ *
+ * // From a BigInt
+ * const pointer = 0x12345678n;
+ * const obj = fromPointer(pointer);
+ *
+ * // Round-trip example
+ * const original = NSString.stringWithUTF8String$("Hello");
+ * const ptr = getPointer(original).readBigUInt64LE(0);
+ * const restored = fromPointer(ptr);
+ * console.log(restored.toString()); // "Hello"
+ * ```
+ *
+ * @warning This is unsafe! The pointer must point to a valid Objective-C object.
+ * Using an invalid pointer will cause a crash. The object must still be alive
+ * (not deallocated) when you call this function.
+ */
+function fromPointer(pointer: Buffer | bigint): NobjcObject {
+  const nativeObj = FromPointer(pointer);
+  if (nativeObj === null) {
+    throw new Error("Cannot create object from null pointer");
+  }
+  return new NobjcObject(nativeObj);
+}
+
+export { NobjcLibrary, NobjcObject, NobjcMethod, NobjcProtocol, getPointer, fromPointer };

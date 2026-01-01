@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { NobjcLibrary, getPointer } from "../dist/index.js";
+import { NobjcLibrary, getPointer, fromPointer } from "../dist/index.js";
 
 test("getPointer returns a Buffer with pointer address", () => {
   // Load Foundation framework
@@ -82,3 +82,105 @@ test("getPointer throws TypeError for non-NobjcObject", () => {
   }).toThrow(TypeError);
 });
 
+test("fromPointer reconstructs object from Buffer", () => {
+  const foundation = new NobjcLibrary("/System/Library/Frameworks/Foundation.framework/Foundation");
+  const NSString = foundation["NSString"];
+  const original = NSString.stringWithUTF8String$("Hello, World!");
+
+  // Get the pointer as a Buffer
+  const pointerBuffer = getPointer(original);
+
+  // Reconstruct the object from the Buffer
+  const reconstructed = fromPointer(pointerBuffer);
+
+  // Verify it's the same object by comparing string values
+  expect(reconstructed.toString()).toBe(original.toString());
+});
+
+test("fromPointer reconstructs object from BigInt", () => {
+  const foundation = new NobjcLibrary("/System/Library/Frameworks/Foundation.framework/Foundation");
+  const NSString = foundation["NSString"];
+  const original = NSString.stringWithUTF8String$("Test String");
+
+  // Get the pointer as a BigInt
+  const pointer = getPointer(original).readBigUInt64LE(0);
+
+  // Reconstruct the object from the BigInt
+  const reconstructed = fromPointer(pointer);
+
+  // Verify it's the same object
+  expect(reconstructed.toString()).toBe(original.toString());
+});
+
+test("fromPointer round-trip preserves object identity", () => {
+  const foundation = new NobjcLibrary("/System/Library/Frameworks/Foundation.framework/Foundation");
+  const NSString = foundation["NSString"];
+  const original = NSString.stringWithUTF8String$("Round Trip Test");
+
+  // Round trip: object -> pointer -> object
+  const pointer = getPointer(original).readBigUInt64LE(0);
+  const restored = fromPointer(pointer);
+
+  // Both should have the same string value
+  expect(restored.toString()).toBe(original.toString());
+
+  // Both should have the same pointer
+  const originalPtr = getPointer(original).readBigUInt64LE(0);
+  const restoredPtr = getPointer(restored).readBigUInt64LE(0);
+  expect(restoredPtr).toBe(originalPtr);
+});
+
+test("fromPointer works with different object types", () => {
+  const foundation = new NobjcLibrary("/System/Library/Frameworks/Foundation.framework/Foundation");
+
+  // Test with NSArray
+  const NSArray = foundation["NSArray"];
+  const array = NSArray.array();
+  const arrayPtr = getPointer(array).readBigUInt64LE(0);
+  const restoredArray = fromPointer(arrayPtr);
+  expect(restoredArray.count()).toBe(0);
+
+  // Test with NSDictionary
+  const NSDictionary = foundation["NSDictionary"];
+  const dict = NSDictionary.dictionary();
+  const dictPtr = getPointer(dict).readBigUInt64LE(0);
+  const restoredDict = fromPointer(dictPtr);
+  expect(restoredDict.count()).toBe(0);
+
+  // Test with NSNumber
+  const NSNumber = foundation["NSNumber"];
+  const num = NSNumber.numberWithInt$(42);
+  const numPtr = getPointer(num).readBigUInt64LE(0);
+  const restoredNum = fromPointer(numPtr);
+  expect(restoredNum.intValue()).toBe(42);
+});
+
+test("fromPointer throws Error for null pointer (0n)", () => {
+  expect(() => {
+    fromPointer(0n);
+  }).toThrow(Error);
+});
+
+test("fromPointer throws TypeError for invalid Buffer size", () => {
+  expect(() => {
+    fromPointer(Buffer.alloc(4)); // 4 bytes instead of 8
+  }).toThrow(TypeError);
+
+  expect(() => {
+    fromPointer(Buffer.alloc(16)); // 16 bytes instead of 8
+  }).toThrow(TypeError);
+});
+
+test("fromPointer throws TypeError for invalid argument types", () => {
+  expect(() => {
+    fromPointer("not a pointer" as any);
+  }).toThrow(TypeError);
+
+  expect(() => {
+    fromPointer(123 as any);
+  }).toThrow(TypeError);
+
+  expect(() => {
+    fromPointer({} as any);
+  }).toThrow(TypeError);
+});

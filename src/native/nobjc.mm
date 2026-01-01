@@ -57,11 +57,54 @@ Napi::Value GetPointer(const Napi::CallbackInfo &info) {
   return buffer;
 }
 
+Napi::Value FromPointer(const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
+  
+  if (info.Length() != 1) {
+    throw Napi::TypeError::New(env, "Expected a single Buffer or BigInt argument");
+  }
+  
+  uintptr_t ptrValue = 0;
+  
+  if (info[0].IsBuffer()) {
+    // Read pointer from Buffer
+    Napi::Buffer<uint8_t> buffer = info[0].As<Napi::Buffer<uint8_t>>();
+    if (buffer.Length() != sizeof(void*)) {
+      throw Napi::TypeError::New(env, "Buffer must be exactly 8 bytes for a 64-bit pointer");
+    }
+    
+    uint8_t* data = buffer.Data();
+    for (size_t i = 0; i < sizeof(void*); ++i) {
+      ptrValue |= (static_cast<uintptr_t>(data[i]) << (i * 8));
+    }
+  } else if (info[0].IsBigInt()) {
+    // Read pointer from BigInt
+    bool lossless = false;
+    uint64_t value = info[0].As<Napi::BigInt>().Uint64Value(&lossless);
+    if (!lossless) {
+      throw Napi::RangeError::New(env, "BigInt value out of range for pointer");
+    }
+    ptrValue = static_cast<uintptr_t>(value);
+  } else {
+    throw Napi::TypeError::New(env, "Expected a Buffer or BigInt argument");
+  }
+  
+  if (ptrValue == 0) {
+    return env.Null();
+  }
+  
+  // Convert the pointer value back to an Objective-C object pointer
+  id obj = reinterpret_cast<id>(ptrValue);
+  
+  return ObjcObject::NewInstance(env, obj);
+}
+
 Napi::Object InitAll(Napi::Env env, Napi::Object exports) {
   ObjcObject::Init(env, exports);
   exports.Set("LoadLibrary", Napi::Function::New(env, LoadLibrary));
   exports.Set("GetClassObject", Napi::Function::New(env, GetClassObject));
   exports.Set("GetPointer", Napi::Function::New(env, GetPointer));
+  exports.Set("FromPointer", Napi::Function::New(env, FromPointer));
   exports.Set("CreateProtocolImplementation",
               Napi::Function::New(env, CreateProtocolImplementation));
   return exports;
