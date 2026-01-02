@@ -4,6 +4,7 @@
 #include <Foundation/Foundation.h>
 #include <atomic>
 #include <chrono>
+#include <mutex>
 #include <napi.h>
 #include <objc/message.h>
 #include <objc/runtime.h>
@@ -11,6 +12,7 @@
 
 // Global storage for protocol implementations
 std::unordered_map<void *, ProtocolImplementation> g_implementations;
+std::mutex g_implementations_mutex;
 
 // MARK: - Helper Functions
 
@@ -169,209 +171,362 @@ Napi::Value ConvertObjCValueToJS(Napi::Env env, void *valuePtr,
   }
 }
 
-// MARK: - Method IMP Creation
+// MARK: - Message Forwarding Implementation
 
-// Create a method implementation from a JavaScript callback
-IMP CreateMethodIMP(Napi::Env env, Napi::Function jsCallback,
-                    const char *typeEncoding,
-                    const std::string &selectorName) {
-  // Parse the method signature to get argument types
-  std::vector<std::string> argTypes = ParseMethodSignature(typeEncoding);
+// Provide method signature for message forwarding
+NSMethodSignature* MethodSignatureForSelector(id self, SEL _cmd, SEL selector) {
+  void *ptr = (__bridge void *)self;
+  
+  std::lock_guard<std::mutex> lock(g_implementations_mutex);
+  auto it = g_implementations.find(ptr);
+  if (it != g_implementations.end()) {
+    NSString *selectorString = NSStringFromSelector(selector);
+    std::string selName = [selectorString UTF8String];
+    auto encIt = it->second.typeEncodings.find(selName);
+    if (encIt != it->second.typeEncodings.end()) {
+      return [NSMethodSignature signatureWithObjCTypes:encIt->second.c_str()];
+    }
+  }
+  // Fall back to superclass for methods we don't implement
+  return [NSObject instanceMethodSignatureForSelector:selector];
+}
 
-  // The first two arguments are always self and _cmd
-  // We need to handle the remaining arguments
-
-  // Create a block that will be called when the Objective-C method is invoked
-  // We use __block to capture variables that need to be mutable
-  // Make a local copy of selectorName so the block captures an owned copy,
-  // not a dangling reference to the caller's string
-  std::string selectorNameCopy = selectorName;
-  id block = ^(id self, ...) {
-    // Get the implementation details for this instance
-    auto it = g_implementations.find((__bridge void *)self);
+// Handle forwarded invocations
+void ForwardInvocation(id self, SEL _cmd, NSInvocation *invocation) {
+  if (!invocation) {
+    NSLog(@"Error: ForwardInvocation called with nil invocation");
+    return;
+  }
+  
+  SEL selector = [invocation selector];
+  NSString *selectorString = NSStringFromSelector(selector);
+  if (!selectorString) {
+    NSLog(@"Error: Failed to convert selector to string");
+    return;
+  }
+  
+  std::string selectorName = [selectorString UTF8String];
+  
+  // Look up implementation and get callback reference
+  // We need to copy the callback reference while holding the lock
+  Napi::FunctionReference callback;
+  std::string typeEncoding;
+  {
+    std::lock_guard<std::mutex> lock(g_implementations_mutex);
+    void *ptr = (__bridge void *)self;
+    auto it = g_implementations.find(ptr);
     if (it == g_implementations.end()) {
       NSLog(@"Warning: Protocol implementation not found for instance %p", self);
       return;
     }
-
-    ProtocolImplementation &impl = it->second;
-    auto callbackIt = impl.callbacks.find(selectorNameCopy);
-    if (callbackIt == impl.callbacks.end()) {
-      NSLog(@"Warning: Callback not found for selector %s",
-            selectorNameCopy.c_str());
+    
+    auto callbackIt = it->second.callbacks.find(selectorName);
+    if (callbackIt == it->second.callbacks.end()) {
+      NSLog(@"Warning: Callback not found for selector %s", selectorName.c_str());
       return;
     }
-
-    // Get the JavaScript callback
-    Napi::FunctionReference &callback = callbackIt->second;
     
-    // Get the env from the callback reference (safe to use within this scope)
-    Napi::Env env = callback.Env();
-
-    // Prepare to extract arguments
-    va_list args;
-    va_start(args, self);
-
-    // Convert Objective-C arguments to JavaScript values
-    std::vector<napi_value> jsArgs;
-
-    // Skip first two types (return type, self, _cmd)
-    for (size_t i = 3; i < argTypes.size(); i++) {
-      SimplifiedTypeEncoding argType(argTypes[i].c_str());
-
-      switch (argType[0]) {
-      case 'c': {
-        char value = (char)va_arg(args, int); // char is promoted to int
-        jsArgs.push_back(Napi::Number::New(env, value));
-        break;
+    // Get a reference to the callback (this is safe to use outside the lock)
+    callback = Napi::Persistent(callbackIt->second.Value());
+    
+    // Also get the type encoding for return value handling
+    auto encIt = it->second.typeEncodings.find(selectorName);
+    if (encIt != it->second.typeEncodings.end()) {
+      typeEncoding = encIt->second;
+    }
+  }
+  
+  if (callback.IsEmpty()) {
+    NSLog(@"Error: JavaScript callback is empty for selector %s", selectorName.c_str());
+    return;
+  }
+  
+  Napi::Env env = callback.Env();
+  
+  // Extract arguments using NSInvocation
+  NSMethodSignature *sig = [invocation methodSignature];
+  if (!sig) {
+    NSLog(@"Error: Failed to get method signature for selector %s", selectorName.c_str());
+    return;
+  }
+  
+  std::vector<napi_value> jsArgs;
+  
+  // Skip first two arguments (self and _cmd)
+  for (NSUInteger i = 2; i < [sig numberOfArguments]; i++) {
+    const char *type = [sig getArgumentTypeAtIndex:i];
+    SimplifiedTypeEncoding argType(type);
+    
+    switch (argType[0]) {
+    case 'c': {
+      char value;
+      [invocation getArgument:&value atIndex:i];
+      jsArgs.push_back(Napi::Number::New(env, value));
+      break;
+    }
+    case 'i': {
+      int value;
+      [invocation getArgument:&value atIndex:i];
+      jsArgs.push_back(Napi::Number::New(env, value));
+      break;
+    }
+    case 's': {
+      short value;
+      [invocation getArgument:&value atIndex:i];
+      jsArgs.push_back(Napi::Number::New(env, value));
+      break;
+    }
+    case 'l': {
+      long value;
+      [invocation getArgument:&value atIndex:i];
+      jsArgs.push_back(Napi::Number::New(env, value));
+      break;
+    }
+    case 'q': {
+      long long value;
+      [invocation getArgument:&value atIndex:i];
+      jsArgs.push_back(Napi::Number::New(env, value));
+      break;
+    }
+    case 'C': {
+      unsigned char value;
+      [invocation getArgument:&value atIndex:i];
+      jsArgs.push_back(Napi::Number::New(env, value));
+      break;
+    }
+    case 'I': {
+      unsigned int value;
+      [invocation getArgument:&value atIndex:i];
+      jsArgs.push_back(Napi::Number::New(env, value));
+      break;
+    }
+    case 'S': {
+      unsigned short value;
+      [invocation getArgument:&value atIndex:i];
+      jsArgs.push_back(Napi::Number::New(env, value));
+      break;
+    }
+    case 'L': {
+      unsigned long value;
+      [invocation getArgument:&value atIndex:i];
+      jsArgs.push_back(Napi::Number::New(env, value));
+      break;
+    }
+    case 'Q': {
+      unsigned long long value;
+      [invocation getArgument:&value atIndex:i];
+      jsArgs.push_back(Napi::Number::New(env, value));
+      break;
+    }
+    case 'f': {
+      float value;
+      [invocation getArgument:&value atIndex:i];
+      jsArgs.push_back(Napi::Number::New(env, value));
+      break;
+    }
+    case 'd': {
+      double value;
+      [invocation getArgument:&value atIndex:i];
+      jsArgs.push_back(Napi::Number::New(env, value));
+      break;
+    }
+    case 'B': {
+      bool value;
+      [invocation getArgument:&value atIndex:i];
+      jsArgs.push_back(Napi::Boolean::New(env, value));
+      break;
+    }
+    case '*': {
+      char *value;
+      [invocation getArgument:&value atIndex:i];
+      if (value == nullptr) {
+        jsArgs.push_back(env.Null());
+      } else {
+        jsArgs.push_back(Napi::String::New(env, value));
       }
-      case 'i': {
-        int value = va_arg(args, int);
-        jsArgs.push_back(Napi::Number::New(env, value));
-        break;
+      break;
+    }
+    case '@': {
+      __unsafe_unretained id value;
+      [invocation getArgument:&value atIndex:i];
+      if (value == nil) {
+        jsArgs.push_back(env.Null());
+      } else {
+        jsArgs.push_back(ObjcObject::NewInstance(env, value));
       }
-      case 's': {
-        short value = (short)va_arg(args, int); // short is promoted to int
-        jsArgs.push_back(Napi::Number::New(env, value));
-        break;
+      break;
+    }
+    case '#': {
+      Class value;
+      [invocation getArgument:&value atIndex:i];
+      if (value == nil) {
+        jsArgs.push_back(env.Null());
+      } else {
+        jsArgs.push_back(ObjcObject::NewInstance(env, value));
       }
-      case 'l': {
-        long value = va_arg(args, long);
-        jsArgs.push_back(Napi::Number::New(env, value));
-        break;
-      }
-      case 'q': {
-        long long value = va_arg(args, long long);
-        jsArgs.push_back(Napi::Number::New(env, value));
-        break;
-      }
-      case 'C': {
-        unsigned char value =
-            (unsigned char)va_arg(args, unsigned int); // promoted
-        jsArgs.push_back(Napi::Number::New(env, value));
-        break;
-      }
-      case 'I': {
-        unsigned int value = va_arg(args, unsigned int);
-        jsArgs.push_back(Napi::Number::New(env, value));
-        break;
-      }
-      case 'S': {
-        unsigned short value =
-            (unsigned short)va_arg(args, unsigned int); // promoted
-        jsArgs.push_back(Napi::Number::New(env, value));
-        break;
-      }
-      case 'L': {
-        unsigned long value = va_arg(args, unsigned long);
-        jsArgs.push_back(Napi::Number::New(env, value));
-        break;
-      }
-      case 'Q': {
-        unsigned long long value = va_arg(args, unsigned long long);
-        jsArgs.push_back(Napi::Number::New(env, value));
-        break;
-      }
-      case 'f': {
-        float value = (float)va_arg(args, double); // float is promoted to double
-        jsArgs.push_back(Napi::Number::New(env, value));
-        break;
-      }
-      case 'd': {
-        double value = va_arg(args, double);
-        jsArgs.push_back(Napi::Number::New(env, value));
-        break;
-      }
-      case 'B': {
-        bool value = (bool)va_arg(args, int); // bool is promoted to int
-        jsArgs.push_back(Napi::Boolean::New(env, value));
-        break;
-      }
-      case '*': {
-        char *value = va_arg(args, char *);
-        if (value == nullptr) {
+      break;
+    }
+    case ':': {
+      SEL value;
+      [invocation getArgument:&value atIndex:i];
+      if (value == nullptr) {
+        jsArgs.push_back(env.Null());
+      } else {
+        NSString *selString = NSStringFromSelector(value);
+        if (selString == nil) {
           jsArgs.push_back(env.Null());
         } else {
-          jsArgs.push_back(Napi::String::New(env, value));
+          jsArgs.push_back(Napi::String::New(env, [selString UTF8String]));
         }
-        break;
       }
-      case '@': {
-        id value = va_arg(args, id);
-        if (value == nil) {
-          jsArgs.push_back(env.Null());
-        } else {
-          jsArgs.push_back(ObjcObject::NewInstance(env, value));
-        }
-        break;
-      }
-      case '#': {
-        Class value = va_arg(args, Class);
-        if (value == nil) {
-          jsArgs.push_back(env.Null());
-        } else {
-          jsArgs.push_back(ObjcObject::NewInstance(env, value));
-        }
-        break;
-      }
-      case ':': {
-        SEL value = va_arg(args, SEL);
-        if (value == nullptr) {
-          jsArgs.push_back(env.Null());
-        } else {
-          NSString *selectorString = NSStringFromSelector(value);
-          if (selectorString == nil) {
-            jsArgs.push_back(env.Null());
-          } else {
-            jsArgs.push_back(
-                Napi::String::New(env, [selectorString UTF8String]));
-          }
-        }
-        break;
-      }
-      case '^': {
-        void *value = va_arg(args, void *);
-        // For now, we'll pass pointers as null or undefined
-        // TODO: Better pointer handling
-        if (value == nullptr) {
-          jsArgs.push_back(env.Null());
-        } else {
-          jsArgs.push_back(env.Undefined());
-        }
-        break;
-      }
-      default:
-        // Unknown type, pass undefined
+      break;
+    }
+    case '^': {
+      void *value;
+      [invocation getArgument:&value atIndex:i];
+      if (value == nullptr) {
+        jsArgs.push_back(env.Null());
+      } else {
         jsArgs.push_back(env.Undefined());
-        break;
+      }
+      break;
+    }
+    default:
+      jsArgs.push_back(env.Undefined());
+      break;
+    }
+  }
+  
+  // Call the JavaScript callback
+  try {
+    Napi::Value result = callback.Call(jsArgs);
+    
+    // Handle return value if the method expects one
+    const char *returnType = [sig methodReturnType];
+    SimplifiedTypeEncoding retType(returnType);
+    
+    if (retType[0] != 'v') { // Not void
+      // Convert JS return value to Objective-C and set it
+      if (!result.IsUndefined() && !result.IsNull()) {
+        switch (retType[0]) {
+        case 'c': {
+          char value = result.As<Napi::Number>().Int32Value();
+          [invocation setReturnValue:&value];
+          break;
+        }
+        case 'i': {
+          int value = result.As<Napi::Number>().Int32Value();
+          [invocation setReturnValue:&value];
+          break;
+        }
+        case 's': {
+          short value = result.As<Napi::Number>().Int32Value();
+          [invocation setReturnValue:&value];
+          break;
+        }
+        case 'l': {
+          long value = result.As<Napi::Number>().Int64Value();
+          [invocation setReturnValue:&value];
+          break;
+        }
+        case 'q': {
+          long long value = result.As<Napi::Number>().Int64Value();
+          [invocation setReturnValue:&value];
+          break;
+        }
+        case 'C': {
+          unsigned char value = result.As<Napi::Number>().Uint32Value();
+          [invocation setReturnValue:&value];
+          break;
+        }
+        case 'I': {
+          unsigned int value = result.As<Napi::Number>().Uint32Value();
+          [invocation setReturnValue:&value];
+          break;
+        }
+        case 'S': {
+          unsigned short value = result.As<Napi::Number>().Uint32Value();
+          [invocation setReturnValue:&value];
+          break;
+        }
+        case 'L': {
+          unsigned long value = result.As<Napi::Number>().Int64Value();
+          [invocation setReturnValue:&value];
+          break;
+        }
+        case 'Q': {
+          unsigned long long value = result.As<Napi::Number>().Int64Value();
+          [invocation setReturnValue:&value];
+          break;
+        }
+        case 'f': {
+          float value = result.As<Napi::Number>().FloatValue();
+          [invocation setReturnValue:&value];
+          break;
+        }
+        case 'd': {
+          double value = result.As<Napi::Number>().DoubleValue();
+          [invocation setReturnValue:&value];
+          break;
+        }
+        case 'B': {
+          bool value = result.As<Napi::Boolean>().Value();
+          [invocation setReturnValue:&value];
+          break;
+        }
+        case '@': {
+          // Return an Objective-C object
+          if (result.IsObject()) {
+            Napi::Object resultObj = result.As<Napi::Object>();
+            // Check if it's an ObjcObject wrapper
+            if (resultObj.Has("$")) {
+              Napi::Value ptrValue = resultObj.Get("$");
+              if (ptrValue.IsNumber()) {
+                id objcValue = (__bridge id)(void *)(uintptr_t)ptrValue.As<Napi::Number>().Int64Value();
+                [invocation setReturnValue:&objcValue];
+              }
+            }
+          }
+          break;
+        }
+        default:
+          NSLog(@"Warning: Unsupported return type '%c' for selector %s", 
+                retType[0], selectorName.c_str());
+          break;
+        }
       }
     }
-
-    va_end(args);
-
-    // Call the JavaScript callback
-    try {
-      callback.Call(jsArgs);
-    } catch (const Napi::Error &e) {
-      NSLog(@"Error calling JavaScript callback for %s: %s",
-            selectorNameCopy.c_str(), e.what());
-    }
-  };
-
-  // Convert the block to an IMP
-  return imp_implementationWithBlock(block);
+  } catch (const Napi::Error &e) {
+    NSLog(@"Error calling JavaScript callback for %s: %s",
+          selectorName.c_str(), e.what());
+  } catch (const std::exception &e) {
+    NSLog(@"Exception calling JavaScript callback for %s: %s",
+          selectorName.c_str(), e.what());
+  } catch (...) {
+    NSLog(@"Unknown error calling JavaScript callback for %s",
+          selectorName.c_str());
+  }
 }
 
 // Deallocation implementation
 void DeallocImplementation(id self, SEL _cmd) {
-  // Remove the implementation from the global map
-  void *ptr = (__bridge void *)self;
-  auto it = g_implementations.find(ptr);
-  if (it != g_implementations.end()) {
-    // Clear all callbacks (this will release the Napi::FunctionReference
-    // objects)
-    it->second.callbacks.clear();
-    g_implementations.erase(it);
+  @autoreleasepool {
+    // Remove the implementation from the global map
+    std::lock_guard<std::mutex> lock(g_implementations_mutex);
+    void *ptr = (__bridge void *)self;
+    auto it = g_implementations.find(ptr);
+    if (it != g_implementations.end()) {
+      // Clear all callbacks (this will release the Napi::FunctionReference objects)
+      // Do this carefully to avoid issues during shutdown
+      try {
+        it->second.callbacks.clear();
+        it->second.typeEncodings.clear();
+      } catch (...) {
+        // Ignore errors during cleanup
+        NSLog(@"Warning: Exception during callback cleanup for instance %p", self);
+      }
+      g_implementations.erase(it);
+    }
   }
 
   // Call the superclass dealloc
@@ -402,12 +557,15 @@ Napi::Value CreateProtocolImplementation(const Napi::CallbackInfo &info) {
   Napi::Object methodImplementations = info[1].As<Napi::Object>();
 
   // Lookup the protocol
-  Protocol *protocol = objc_getProtocol(protocolName.c_str());
-  if (protocol == nullptr) {
-    // Log warning but continue (for informal protocols)
-    NSLog(@"Warning: Protocol %s not found, creating class without protocol "
-          @"conformance",
-          protocolName.c_str());
+  Protocol *protocol = nullptr;
+  if (!protocolName.empty()) {
+    protocol = objc_getProtocol(protocolName.c_str());
+    if (protocol == nullptr) {
+      // Log warning but continue (for informal protocols)
+      NSLog(@"Warning: Protocol %s not found, creating class without protocol "
+            @"conformance",
+            protocolName.c_str());
+    }
   }
 
   // Generate a unique class name using timestamp and a counter
@@ -434,6 +592,7 @@ Napi::Value CreateProtocolImplementation(const Napi::CallbackInfo &info) {
   // Store callbacks for this instance (we'll set the instance pointer later)
   ProtocolImplementation impl{
       .callbacks = {},
+      .typeEncodings = {},
       .className = className,
   };
 
@@ -501,19 +660,16 @@ Napi::Value CreateProtocolImplementation(const Napi::CallbackInfo &info) {
             selectorName.c_str(), typeEncoding);
     }
 
-    // Store the callback (we'll use a temporary pointer for now)
-    impl.callbacks[selectorName] =
-        Napi::Persistent(jsCallback);
-
-    // Create the IMP
-    IMP methodIMP =
-        CreateMethodIMP(env, jsCallback, typeEncoding, selectorName);
-
-    // Add the method to the class
-    if (!class_addMethod(newClass, selector, methodIMP, typeEncoding)) {
-      NSLog(@"Warning: Failed to add method %s to class", selectorName.c_str());
-    }
+     // Store the callback and type encoding for message forwarding
+    impl.callbacks[selectorName] = Napi::Persistent(jsCallback);
+    impl.typeEncodings[selectorName] = std::string(typeEncoding);
   }
+  
+  // Add message forwarding methods to the class
+  class_addMethod(newClass, @selector(methodSignatureForSelector:),
+                  (IMP)MethodSignatureForSelector, "@@::");
+  class_addMethod(newClass, @selector(forwardInvocation:),
+                  (IMP)ForwardInvocation, "v@:@");
 
   // Add dealloc method
   class_addMethod(newClass, sel_registerName("dealloc"),
@@ -535,7 +691,10 @@ Napi::Value CreateProtocolImplementation(const Napi::CallbackInfo &info) {
 
   // Store the implementation in the global map
   void *instancePtr = (__bridge void *)instance;
-  g_implementations.emplace(instancePtr, std::move(impl));
+  {
+    std::lock_guard<std::mutex> lock(g_implementations_mutex);
+    g_implementations.emplace(instancePtr, std::move(impl));
+  }
 
   // Return wrapped object
   return ObjcObject::NewInstance(env, instance);

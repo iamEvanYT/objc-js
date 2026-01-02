@@ -7,11 +7,21 @@
 #include <unordered_map>
 #include <vector>
 
+// Forward declarations for Objective-C types
+#ifdef __OBJC__
+@class NSMethodSignature;
+@class NSInvocation;
+#else
+typedef struct NSMethodSignature NSMethodSignature;
+typedef struct NSInvocation NSInvocation;
+#endif
+
 // MARK: - Data Structures
 
 // Stores information about a protocol implementation instance
 struct ProtocolImplementation {
   std::unordered_map<std::string, Napi::FunctionReference> callbacks;
+  std::unordered_map<std::string, std::string> typeEncodings;
   std::string className;
   // Note: We don't store Napi::Env directly as it's unsafe beyond callback scope.
   // Instead, we retrieve the env from the FunctionReference callbacks when needed.
@@ -26,10 +36,11 @@ extern std::unordered_map<void *, ProtocolImplementation> g_implementations;
 // Main entry point: creates a new Objective-C class that implements a protocol
 Napi::Value CreateProtocolImplementation(const Napi::CallbackInfo &info);
 
-// Helper: Creates an IMP (method implementation) from a JavaScript callback
-IMP CreateMethodIMP(Napi::Env env, Napi::Function jsCallback,
-                    const char *typeEncoding,
-                    const std::string &selectorName);
+// Method signature provider for message forwarding
+NSMethodSignature* MethodSignatureForSelector(id self, SEL _cmd, SEL selector);
+
+// Forward invocation handler for dynamic method dispatch
+void ForwardInvocation(id self, SEL _cmd, NSInvocation *invocation);
 
 // Helper: Parses an Objective-C method signature to extract argument types
 std::vector<std::string> ParseMethodSignature(const char *typeEncoding);

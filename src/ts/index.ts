@@ -47,7 +47,11 @@ class NobjcObject {
         // toString is always present
         if (p === "toString") return true;
         // check if the object responds to the selector
-        return target.$msgSend("respondsToSelector:", NobjcMethodNameToObjcSelector(p.toString())) as boolean;
+        try {
+          return target.$msgSend("respondsToSelector:", NobjcMethodNameToObjcSelector(p.toString())) as boolean;
+        } catch (e) {
+          return false;
+        }
       },
       get(target, methodName: string | symbol, receiver: NobjcObject) {
         // Return the underlying native object when Symbol is accessed
@@ -62,6 +66,25 @@ class NobjcObject {
         if (methodName === "toString") {
           return () => String(object.$msgSend("description"));
         }
+
+        // handle other built-in Object.prototype properties
+        const builtInProps = [
+          "constructor",
+          "valueOf",
+          "hasOwnProperty",
+          "isPrototypeOf",
+          "propertyIsEnumerable",
+          "toLocaleString",
+          "__proto__",
+          "__defineGetter__",
+          "__defineSetter__",
+          "__lookupGetter__",
+          "__lookupSetter__"
+        ];
+        if (builtInProps.includes(methodName)) {
+          return Reflect.get(target, methodName);
+        }
+
         if (!(methodName in receiver)) {
           throw new Error(`Method ${methodName} not found on object ${receiver}`);
         }
@@ -79,6 +102,13 @@ function unwrapArg(arg: any): any {
   return arg;
 }
 
+function wrapObjCObjectIfNeeded(result: unknown): unknown {
+  if (typeof result == "object" && result instanceof ObjcObject) {
+    return new NobjcObject(result);
+  }
+  return result;
+}
+
 interface NobjcMethod {
   (...args: any[]): any;
 }
@@ -86,14 +116,12 @@ interface NobjcMethod {
 // Note: This is actually a factory function that returns a callable Proxy
 const NobjcMethod = function (object: NobjcNative.ObjcObject, methodName: string): NobjcMethod {
   const selector = NobjcMethodNameToObjcSelector(methodName);
+
   // This cannot be an arrow function because we need to access `arguments`.
   function methodFunc(): any {
     const unwrappedArgs = Array.from(arguments).map(unwrapArg);
     const result = object.$msgSend(selector, ...unwrappedArgs);
-    if (typeof result == "object" && result instanceof ObjcObject) {
-      return new NobjcObject(result);
-    }
-    return result;
+    return wrapObjCObjectIfNeeded(result);
   }
   const handler: ProxyHandler<any> = {};
   return new Proxy(methodFunc, handler) as NobjcMethod;
@@ -105,19 +133,17 @@ class NobjcProtocol {
     const convertedMethods: Record<string, Function> = {};
     for (const [methodName, impl] of Object.entries(methodImplementations)) {
       const selector = NobjcMethodNameToObjcSelector(methodName);
-      // Wrap the implementation to unwrap args and wrap return values
+      // Wrap the implementation to wrap args and unwrap return values
       convertedMethods[selector] = function (...args: any[]) {
-        const unwrappedArgs = args.map(unwrapArg);
-        const result = impl(...unwrappedArgs);
+        // Wrap native ObjcObject arguments in NobjcObject proxies
+        const wrappedArgs = args.map((arg) => {
+          return wrapObjCObjectIfNeeded(arg);
+        });
+
+        const result = impl(...wrappedArgs);
+
         // If the result is already a NobjcObject, unwrap it to get the native object
-        if (result && typeof result === "object" && NATIVE_OBJC_OBJECT in result) {
-          return result[NATIVE_OBJC_OBJECT];
-        }
-        // If the result is a native ObjcObject, return it as-is
-        if (typeof result === "object" && result instanceof ObjcObject) {
-          return result;
-        }
-        return result;
+        return unwrapArg(result);
       };
     }
 
