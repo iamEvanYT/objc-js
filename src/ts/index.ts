@@ -8,6 +8,7 @@ import {
 } from "./native.js";
 import { NobjcNative } from "./native.js";
 
+const customInspectSymbol = Symbol.for("nodejs.util.inspect.custom");
 const NATIVE_OBJC_OBJECT = Symbol("nativeObjcObject");
 
 class NobjcLibrary {
@@ -38,6 +39,7 @@ function ObjcSelectorToNobjcMethodName(selector: string): string {
 class NobjcObject {
   [key: string]: NobjcMethod;
   constructor(object: NobjcNative.ObjcObject) {
+    // Create the proxy handler
     const handler: ProxyHandler<NobjcNative.ObjcObject> = {
       has(target, p: string | symbol) {
         // Return true for the special Symbol to enable unwrapping
@@ -58,10 +60,12 @@ class NobjcObject {
         if (methodName === NATIVE_OBJC_OBJECT) {
           return target;
         }
+
         // guard against symbols
         if (typeof methodName === "symbol") {
           return Reflect.get(object, methodName, receiver);
         }
+
         // handle toString separately
         if (methodName === "toString") {
           // if the receiver has a UTF8String method, use it to get the string representation
@@ -69,7 +73,7 @@ class NobjcObject {
             return () => String(object.$msgSend("UTF8String"));
           }
           // Otherwise, use the description method
-          return () => String(object.$msgSend("description"));
+          return () => String(wrapObjCObjectIfNeeded(object.$msgSend("description")));
         }
 
         // handle other built-in Object.prototype properties
@@ -96,7 +100,15 @@ class NobjcObject {
         return NobjcMethod(object, methodName);
       }
     };
-    return new Proxy<NobjcNative.ObjcObject>(object, handler) as unknown as NobjcObject;
+
+    // Create the proxy
+    const proxy = new Proxy<NobjcNative.ObjcObject>(object, handler) as unknown as NobjcObject;
+
+    // This is used to override the default inspect behavior for the object. (console.log)
+    (object as any)[customInspectSymbol] = () => proxy.toString();
+
+    // Return the proxy
+    return proxy;
   }
 }
 

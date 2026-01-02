@@ -4,3 +4,4 @@
 .vscode
 /scripts/*.js
 .clangd
+test.sh
