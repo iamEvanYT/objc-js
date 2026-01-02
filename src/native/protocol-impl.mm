@@ -503,14 +503,21 @@ void ForwardInvocation(id self, SEL _cmd, NSInvocation *invocation) {
           // Return an Objective-C object
           if (result.IsObject()) {
             Napi::Object resultObj = result.As<Napi::Object>();
-            // Check if it's an ObjcObject wrapper
-            if (resultObj.Has("$")) {
-              Napi::Value ptrValue = resultObj.Get("$");
-              if (ptrValue.IsNumber()) {
-                id objcValue = (__bridge id)(void *)(uintptr_t)ptrValue.As<Napi::Number>().Int64Value();
-                [invocation setReturnValue:&objcValue];
-              }
+            // Check if it's an ObjcObject instance
+            if (resultObj.InstanceOf(ObjcObject::constructor.Value())) {
+              ObjcObject *objcObj = Napi::ObjectWrap<ObjcObject>::Unwrap(resultObj);
+              id objcValue = objcObj->objcObject;
+              // NSLog(@"Setting return value to Objective-C object: %@ (class: %@)", objcValue, [objcValue class]);
+              [invocation setReturnValue:&objcValue];
+            } else {
+              NSLog(@"Warning: result object is not an ObjcObject instance");
             }
+          } else if (result.IsNull()) {
+            NSLog(@"Result is null, setting nil return value");
+            id objcValue = nil;
+            [invocation setReturnValue:&objcValue];
+          } else {
+            NSLog(@"Warning: result is not an object (type: %d)", result.Type());
           }
           break;
         }
