@@ -64,6 +64,11 @@ class NobjcObject {
         }
         // handle toString separately
         if (methodName === "toString") {
+          // if the receiver has a UTF8String method, use it to get the string representation
+          if ("UTF8String" in receiver) {
+            return () => String(object.$msgSend("UTF8String"));
+          }
+          // Otherwise, use the description method
           return () => String(object.$msgSend("description"));
         }
 
