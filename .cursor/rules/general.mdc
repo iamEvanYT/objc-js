@@ -5,3 +5,4 @@ alwaysApply: true
 ---
 
 - Use `bun run build` to build the project.
+- Any native builds should NOT be done inside the sandbox. They will fail due to sandbox restrictions. Run the command OUTSIDE of the sandbox.

@@ -178,7 +178,7 @@ describe("Protocol Implementation Tests", () => {
     }
   });
 
-  test("should actually invoke callback when method is called via performSelector", () => {
+  test("should actually invoke callback when method is called via performSelector", async () => {
     let callbackInvoked = false;
     let receivedArg: any = null;
 
@@ -194,6 +194,9 @@ describe("Protocol Implementation Tests", () => {
 
     // Call the method via performSelector:withObject:
     (delegate as any).performSelector$withObject$("handleString:", testString);
+
+    // Pump the event loop to ensure the callback is invoked
+    await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(callbackInvoked).toBe(true);
     expect(receivedArg).not.toBeNull();

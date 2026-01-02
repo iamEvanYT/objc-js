@@ -5,7 +5,8 @@
             "sources": [
                 "src/native/nobjc.mm",
                 "src/native/ObjcObject.mm",
-                "src/native/protocol-impl.mm"
+                "src/native/protocol-impl.mm",
+                "src/native/method-forwarding.mm"
             ],
             "defines": [
                 "NODE_ADDON_API_CPP_EXCEPTIONS",

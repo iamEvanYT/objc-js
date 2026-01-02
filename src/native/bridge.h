@@ -1,4 +1,5 @@
 #include "ObjcObject.h"
+#include "type-conversion.h"
 #include <Foundation/Foundation.h>
 #include <format>
 #include <napi.h>
@@ -218,51 +219,6 @@ T ConvertToNativeValue(const Napi::Value &value,
 
 // MARK: - Conversion Top Layer
 
-// Helper class to manage the lifetime of simplified type encodings
-class SimplifiedTypeEncoding {
-private:
-  std::string simplified;
-
-public:
-  SimplifiedTypeEncoding(const char *typeEncoding) : simplified(typeEncoding) {
-    // Remove any leading qualifiers
-    while (!simplified.empty() && (simplified[0] == 'r' || simplified[0] == 'n' ||
-                                   simplified[0] == 'N' || simplified[0] == 'o' ||
-                                   simplified[0] == 'O' || simplified[0] == 'R' ||
-                                   simplified[0] == 'V')) {
-      simplified.erase(0, 1);
-    }
-  }
-
-  const char *c_str() const { return simplified.c_str(); }
-  char operator[](size_t index) const { return simplified[index]; }
-  operator const char *() const { return simplified.c_str(); }
-};
-
-// Legacy function for compatibility - returns pointer to internal string
-// WARNING: The returned pointer is only valid as long as the typeEncoding parameter is valid
-inline const char *SimplifyTypeEncoding(const char *typeEncoding) {
-  // For simple cases where there are no qualifiers, return the original pointer
-  if (typeEncoding && typeEncoding[0] != 'r' && typeEncoding[0] != 'n' &&
-      typeEncoding[0] != 'N' && typeEncoding[0] != 'o' &&
-      typeEncoding[0] != 'O' && typeEncoding[0] != 'R' &&
-      typeEncoding[0] != 'V') {
-    return typeEncoding;
-  }
-  
-  // For complex cases, we need to skip qualifiers
-  // This is a temporary fix - callers should use SimplifiedTypeEncoding class
-  static thread_local std::string buffer;
-  buffer = typeEncoding;
-  while (!buffer.empty() && (buffer[0] == 'r' || buffer[0] == 'n' ||
-                             buffer[0] == 'N' || buffer[0] == 'o' ||
-                             buffer[0] == 'O' || buffer[0] == 'R' ||
-                             buffer[0] == 'V')) {
-    buffer.erase(0, 1);
-  }
-  return buffer.c_str();
-}
-
 // Convert a Napi::Value to an ObjcType based on the provided type encoding.
 inline auto AsObjCArgument(const Napi::Value &value, const char *typeEncoding,
                            const ObjcArgumentContext &context)
@@ -321,71 +277,11 @@ inline auto AsObjCArgument(const Napi::Value &value, const char *typeEncoding,
 }
 
 // Convert the return value of an Objective-C method to a Napi::Value.
+// This is an alias for GetInvocationReturnAsJS for backward compatibility.
 inline Napi::Value
 ConvertReturnValueToJSValue(Napi::Env env, NSInvocation *invocation,
                             NSMethodSignature *methodSignature) {
-#define NOBJC_NUMERIC_RETURN_CASE(encoding, ctype)                             \
-  case encoding: {                                                             \
-    ctype result;                                                              \
-    [invocation getReturnValue:&result];                                       \
-    return Napi::Number::New(env, result);                                     \
-  }
-  switch (*SimplifyTypeEncoding([methodSignature methodReturnType])) {
-    NOBJC_NUMERIC_RETURN_CASE('c', char)
-    NOBJC_NUMERIC_RETURN_CASE('i', int)
-    NOBJC_NUMERIC_RETURN_CASE('s', short)
-    NOBJC_NUMERIC_RETURN_CASE('l', long)
-    NOBJC_NUMERIC_RETURN_CASE('q', long long)
-    NOBJC_NUMERIC_RETURN_CASE('C', unsigned char)
-    NOBJC_NUMERIC_RETURN_CASE('I', unsigned int)
-    NOBJC_NUMERIC_RETURN_CASE('S', unsigned short)
-    NOBJC_NUMERIC_RETURN_CASE('L', unsigned long)
-    NOBJC_NUMERIC_RETURN_CASE('Q', unsigned long long)
-    NOBJC_NUMERIC_RETURN_CASE('f', float)
-    NOBJC_NUMERIC_RETURN_CASE('d', double)
-  case 'B': {
-    bool result;
-    [invocation getReturnValue:&result];
-    return Napi::Boolean::New(env, result);
-  }
-  case 'v':
-    return env.Undefined();
-  case '*': {
-    char *result = nullptr;
-    [invocation getReturnValue:&result];
-    if (result == nullptr) {
-      return env.Null();
-    }
-    Napi::String jsString = Napi::String::New(env, result);
-    // free(result); // It might not be safe to free this memory.
-    return jsString;
-  }
-  case '@':
-  case '#': {
-    id result = nil;
-    [invocation getReturnValue:&result];
-    if (result == nil) {
-      return env.Null();
-    }
-    return ObjcObject::NewInstance(env, result);
-  }
-  case ':': {
-    SEL result = nullptr;
-    [invocation getReturnValue:&result];
-    if (result == nullptr) {
-      return env.Null();
-    }
-    NSString *selectorString = NSStringFromSelector(result);
-    if (selectorString == nil) {
-      return env.Null();
-    }
-    return Napi::String::New(env, [selectorString UTF8String]);
-  }
-  default:
-    Napi::TypeError::New(env, "Unsupported return type (post-invoke)")
-        .ThrowAsJavaScriptException();
-    return env.Null();
-  }
+  return GetInvocationReturnAsJS(env, invocation, methodSignature);
 }
 
 #endif // NATIVE_BRIDGE_H
