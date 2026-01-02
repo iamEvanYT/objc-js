@@ -1,0 +1,7 @@
+---
+description: General rules for the project.
+globs: "*.ts, *.tsx, *.html, *.css, *.js, *.jsx, package.json"
+alwaysApply: true
+---
+
+- Use `bun run build` to build the project.

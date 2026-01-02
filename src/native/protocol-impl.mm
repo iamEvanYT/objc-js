@@ -8,6 +8,7 @@
 #include <napi.h>
 #include <objc/message.h>
 #include <objc/runtime.h>
+#include <pthread.h>
 #include <sstream>
 
 // Global storage for protocol implementations
@@ -171,107 +172,26 @@ Napi::Value ConvertObjCValueToJS(Napi::Env env, void *valuePtr,
   }
 }
 
-// MARK: - Message Forwarding Implementation
+// MARK: - ThreadSafeFunction Callback Handler
 
-// Override respondsToSelector to return YES for methods we implement
-BOOL RespondsToSelector(id self, SEL _cmd, SEL selector) {
-  void *ptr = (__bridge void *)self;
-  
-  // Check if this is one of our implemented methods
-  {
-    std::lock_guard<std::mutex> lock(g_implementations_mutex);
-    auto it = g_implementations.find(ptr);
-    if (it != g_implementations.end()) {
-      NSString *selectorString = NSStringFromSelector(selector);
-      if (selectorString != nil) {
-        std::string selName = [selectorString UTF8String];
-        auto callbackIt = it->second.callbacks.find(selName);
-        if (callbackIt != it->second.callbacks.end()) {
-          return YES;
-        }
-      }
-    }
+// This function runs on the JavaScript thread
+void CallJSCallback(Napi::Env env, Napi::Function jsCallback, InvocationData* data) {
+  if (!data) {
+    NSLog(@"Error: InvocationData is null in CallJSCallback");
+    return;
   }
   
-  // For methods we don't implement, check if NSObject responds to them
-  // This handles standard NSObject methods like description, isEqual:, etc.
-  return [NSObject instancesRespondToSelector:selector];
-}
-
-// Provide method signature for message forwarding
-NSMethodSignature* MethodSignatureForSelector(id self, SEL _cmd, SEL selector) {
-  void *ptr = (__bridge void *)self;
-  
-  std::lock_guard<std::mutex> lock(g_implementations_mutex);
-  auto it = g_implementations.find(ptr);
-  if (it != g_implementations.end()) {
-    NSString *selectorString = NSStringFromSelector(selector);
-    std::string selName = [selectorString UTF8String];
-    auto encIt = it->second.typeEncodings.find(selName);
-    if (encIt != it->second.typeEncodings.end()) {
-      return [NSMethodSignature signatureWithObjCTypes:encIt->second.c_str()];
-    }
-  }
-  // Fall back to superclass for methods we don't implement
-  return [NSObject instanceMethodSignatureForSelector:selector];
-}
-
-// Handle forwarded invocations
-void ForwardInvocation(id self, SEL _cmd, NSInvocation *invocation) {
+  NSInvocation *invocation = data->invocation;
   if (!invocation) {
-    NSLog(@"Error: ForwardInvocation called with nil invocation");
+    NSLog(@"Error: NSInvocation is null in CallJSCallback");
     return;
   }
-  
-  SEL selector = [invocation selector];
-  NSString *selectorString = NSStringFromSelector(selector);
-  if (!selectorString) {
-    NSLog(@"Error: Failed to convert selector to string");
-    return;
-  }
-  
-  std::string selectorName = [selectorString UTF8String];
-  
-  // Look up implementation and get callback reference
-  // We need to copy the callback reference while holding the lock
-  Napi::FunctionReference callback;
-  std::string typeEncoding;
-  {
-    std::lock_guard<std::mutex> lock(g_implementations_mutex);
-    void *ptr = (__bridge void *)self;
-    auto it = g_implementations.find(ptr);
-    if (it == g_implementations.end()) {
-      NSLog(@"Warning: Protocol implementation not found for instance %p", self);
-      return;
-    }
-    
-    auto callbackIt = it->second.callbacks.find(selectorName);
-    if (callbackIt == it->second.callbacks.end()) {
-      NSLog(@"Warning: Callback not found for selector %s", selectorName.c_str());
-      return;
-    }
-    
-    // Get a reference to the callback (this is safe to use outside the lock)
-    callback = Napi::Persistent(callbackIt->second.Value());
-    
-    // Also get the type encoding for return value handling
-    auto encIt = it->second.typeEncodings.find(selectorName);
-    if (encIt != it->second.typeEncodings.end()) {
-      typeEncoding = encIt->second;
-    }
-  }
-  
-  if (callback.IsEmpty()) {
-    NSLog(@"Error: JavaScript callback is empty for selector %s", selectorName.c_str());
-    return;
-  }
-  
-  Napi::Env env = callback.Env();
   
   // Extract arguments using NSInvocation
   NSMethodSignature *sig = [invocation methodSignature];
   if (!sig) {
-    NSLog(@"Error: Failed to get method signature for selector %s", selectorName.c_str());
+    NSLog(@"Error: Failed to get method signature for selector %s", 
+          data->selectorName.c_str());
     return;
   }
   
@@ -424,7 +344,7 @@ void ForwardInvocation(id self, SEL _cmd, NSInvocation *invocation) {
   
   // Call the JavaScript callback
   try {
-    Napi::Value result = callback.Call(jsArgs);
+    Napi::Value result = jsCallback.Call(jsArgs);
     
     // Handle return value if the method expects one
     const char *returnType = [sig methodReturnType];
@@ -507,13 +427,11 @@ void ForwardInvocation(id self, SEL _cmd, NSInvocation *invocation) {
             if (resultObj.InstanceOf(ObjcObject::constructor.Value())) {
               ObjcObject *objcObj = Napi::ObjectWrap<ObjcObject>::Unwrap(resultObj);
               id objcValue = objcObj->objcObject;
-              // NSLog(@"Setting return value to Objective-C object: %@ (class: %@)", objcValue, [objcValue class]);
               [invocation setReturnValue:&objcValue];
             } else {
               NSLog(@"Warning: result object is not an ObjcObject instance");
             }
           } else if (result.IsNull()) {
-            NSLog(@"Result is null, setting nil return value");
             id objcValue = nil;
             [invocation setReturnValue:&objcValue];
           } else {
@@ -523,20 +441,194 @@ void ForwardInvocation(id self, SEL _cmd, NSInvocation *invocation) {
         }
         default:
           NSLog(@"Warning: Unsupported return type '%c' for selector %s", 
-                retType[0], selectorName.c_str());
+                retType[0], data->selectorName.c_str());
           break;
         }
       }
     }
   } catch (const Napi::Error &e) {
     NSLog(@"Error calling JavaScript callback for %s: %s",
-          selectorName.c_str(), e.what());
+          data->selectorName.c_str(), e.what());
   } catch (const std::exception &e) {
     NSLog(@"Exception calling JavaScript callback for %s: %s",
-          selectorName.c_str(), e.what());
+          data->selectorName.c_str(), e.what());
   } catch (...) {
     NSLog(@"Unknown error calling JavaScript callback for %s",
-          selectorName.c_str());
+          data->selectorName.c_str());
+  }
+  
+  // Clean up the invocation data
+  delete data;
+}
+
+// MARK: - Message Forwarding Implementation
+
+// Override respondsToSelector to return YES for methods we implement
+BOOL RespondsToSelector(id self, SEL _cmd, SEL selector) {
+  void *ptr = (__bridge void *)self;
+  
+  // Check if this is one of our implemented methods
+  {
+    std::lock_guard<std::mutex> lock(g_implementations_mutex);
+    auto it = g_implementations.find(ptr);
+    if (it != g_implementations.end()) {
+      NSString *selectorString = NSStringFromSelector(selector);
+      if (selectorString != nil) {
+        std::string selName = [selectorString UTF8String];
+        auto callbackIt = it->second.callbacks.find(selName);
+        if (callbackIt != it->second.callbacks.end()) {
+          return YES;
+        }
+      }
+    }
+  }
+  
+  // For methods we don't implement, check if NSObject responds to them
+  // This handles standard NSObject methods like description, isEqual:, etc.
+  return [NSObject instancesRespondToSelector:selector];
+}
+
+// Provide method signature for message forwarding
+NSMethodSignature* MethodSignatureForSelector(id self, SEL _cmd, SEL selector) {
+  void *ptr = (__bridge void *)self;
+  
+  std::lock_guard<std::mutex> lock(g_implementations_mutex);
+  auto it = g_implementations.find(ptr);
+  if (it != g_implementations.end()) {
+    NSString *selectorString = NSStringFromSelector(selector);
+    std::string selName = [selectorString UTF8String];
+    auto encIt = it->second.typeEncodings.find(selName);
+    if (encIt != it->second.typeEncodings.end()) {
+      return [NSMethodSignature signatureWithObjCTypes:encIt->second.c_str()];
+    }
+  }
+  // Fall back to superclass for methods we don't implement
+  return [NSObject instanceMethodSignatureForSelector:selector];
+}
+
+// Handle forwarded invocations
+void ForwardInvocation(id self, SEL _cmd, NSInvocation *invocation) {
+  if (!invocation) {
+    NSLog(@"Error: ForwardInvocation called with nil invocation");
+    return;
+  }
+  
+  // Retain the invocation to keep it alive during async call
+  [invocation retainArguments];
+  
+  SEL selector = [invocation selector];
+  NSString *selectorString = NSStringFromSelector(selector);
+  if (!selectorString) {
+    NSLog(@"Error: Failed to convert selector to string");
+    return;
+  }
+  
+  std::string selectorName = [selectorString UTF8String];
+  
+  // Store self pointer for later lookups
+  void *ptr = (__bridge void *)self;
+  
+  // First pass: get ONLY thread-safe data (pthread_t, TSFN, typeEncoding)
+  // DO NOT access any N-API values here - we may not be on the JS thread!
+  pthread_t js_thread;
+  Napi::ThreadSafeFunction tsfn;
+  std::string typeEncoding;
+  {
+    std::lock_guard<std::mutex> lock(g_implementations_mutex);
+    auto it = g_implementations.find(ptr);
+    if (it == g_implementations.end()) {
+      NSLog(@"Warning: Protocol implementation not found for instance %p", self);
+      return;
+    }
+    
+    auto callbackIt = it->second.callbacks.find(selectorName);
+    if (callbackIt == it->second.callbacks.end()) {
+      NSLog(@"Warning: Callback not found for selector %s", selectorName.c_str());
+      return;
+    }
+    
+    // Get thread ID first - this is a plain C type, safe from any thread
+    js_thread = it->second.js_thread;
+    
+    // Get the ThreadSafeFunction - this is thread-safe by design
+    // IMPORTANT: We must Acquire() to increment the ref count, because copying
+    // a ThreadSafeFunction does NOT increment it. If DeallocImplementation runs
+    // and calls Release() on the original, our copy would become invalid.
+    tsfn = callbackIt->second;
+    napi_status acq_status = tsfn.Acquire();
+    if (acq_status != napi_ok) {
+      NSLog(@"Warning: Failed to acquire ThreadSafeFunction for selector %s", selectorName.c_str());
+      return;
+    }
+    
+    // Get the type encoding for return value handling
+    auto encIt = it->second.typeEncodings.find(selectorName);
+    if (encIt != it->second.typeEncodings.end()) {
+      typeEncoding = encIt->second;
+    }
+  }
+  
+  // Check if we're on the JS thread BEFORE any N-API value access
+  bool is_js_thread = pthread_equal(pthread_self(), js_thread);
+  
+  // Create invocation data
+  auto data = new InvocationData();
+  data->invocation = invocation;
+  data->selectorName = selectorName;
+  data->typeEncoding = typeEncoding;
+  
+  if (is_js_thread) {
+    // We're on the JS thread, so it's safe to access N-API values directly
+    // Release the TSFN we acquired - we don't need it on this path
+    tsfn.Release();
+    
+    // Do a second lookup to get the JS callback
+    // IMPORTANT: We must call .Value() while holding the lock to prevent
+    // DeallocImplementation from erasing the entry while we're using it
+    napi_env stored_env;
+    Napi::Function jsFn;
+    {
+      std::lock_guard<std::mutex> lock(g_implementations_mutex);
+      auto it = g_implementations.find(ptr);
+      if (it == g_implementations.end()) {
+        NSLog(@"Warning: Protocol implementation not found for instance %p (JS thread path)", self);
+        delete data;
+        return;
+      }
+      
+      auto jsCallbackIt = it->second.jsCallbacks.find(selectorName);
+      if (jsCallbackIt == it->second.jsCallbacks.end()) {
+        NSLog(@"Warning: JS callback not found for selector %s (JS thread path)", selectorName.c_str());
+        delete data;
+        return;
+      }
+      
+      stored_env = it->second.env;
+      // Get the function value WHILE HOLDING THE LOCK
+      // This prevents a race with DeallocImplementation clearing the jsCallbacks map
+      jsFn = jsCallbackIt->second.Value();
+    }
+    
+    // Now jsFn is a local Napi::Function (napi_value), safe to use after lock release
+    Napi::Env env(stored_env);
+    CallJSCallback(env, jsFn, data);
+    // Data is deleted in CallJSCallback
+  } else {
+    // We're on a different thread - NEVER access FunctionReference here!
+    // Use ThreadSafeFunction to marshal to JS thread
+    napi_status status = tsfn.BlockingCall(data, CallJSCallback);
+    
+    // Release our acquired reference to the TSFN
+    // This balances the Acquire() call above
+    tsfn.Release();
+    
+    if (status != napi_ok) {
+      NSLog(@"Error: Failed to call ThreadSafeFunction for selector %s (status: %d)",
+            selectorName.c_str(), status);
+      delete data;
+      return;
+    }
+    // Data will be deleted in the callback
   }
 }
 
@@ -548,10 +640,15 @@ void DeallocImplementation(id self, SEL _cmd) {
     void *ptr = (__bridge void *)self;
     auto it = g_implementations.find(ptr);
     if (it != g_implementations.end()) {
-      // Clear all callbacks (this will release the Napi::FunctionReference objects)
+      // Release all ThreadSafeFunctions and JS callbacks
       // Do this carefully to avoid issues during shutdown
       try {
+        for (auto& pair : it->second.callbacks) {
+          // Release the ThreadSafeFunction
+          pair.second.Release();
+        }
         it->second.callbacks.clear();
+        it->second.jsCallbacks.clear();
         it->second.typeEncodings.clear();
       } catch (...) {
         // Ignore errors during cleanup
@@ -626,6 +723,8 @@ Napi::Value CreateProtocolImplementation(const Napi::CallbackInfo &info) {
       .callbacks = {},
       .typeEncodings = {},
       .className = className,
+      .env = env,
+      .js_thread = pthread_self() // Store the current (JS) thread ID
   };
 
   // Store default type encodings to keep them alive
@@ -692,8 +791,19 @@ Napi::Value CreateProtocolImplementation(const Napi::CallbackInfo &info) {
             selectorName.c_str(), typeEncoding);
     }
 
-     // Store the callback and type encoding for message forwarding
-    impl.callbacks[selectorName] = Napi::Persistent(jsCallback);
+    // Create a ThreadSafeFunction for this callback
+    Napi::ThreadSafeFunction tsfn = Napi::ThreadSafeFunction::New(
+      env,
+      jsCallback,                    // The JS function to call
+      "ProtocolCallback",            // Resource name
+      0,                             // Max queue size (0 = unlimited)
+      1,                             // Initial thread count
+      [](Napi::Env) {} // Finalizer (no context to clean up)
+    );
+    
+    // Store both the TSFN and the original JS function
+    impl.callbacks[selectorName] = tsfn;
+    impl.jsCallbacks[selectorName] = Napi::Persistent(jsCallback);
     impl.typeEncodings[selectorName] = std::string(typeEncoding);
   }
   

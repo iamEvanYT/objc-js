@@ -18,13 +18,23 @@ typedef struct NSInvocation NSInvocation;
 
 // MARK: - Data Structures
 
+// Data passed from native thread to JS thread for invocation handling
+struct InvocationData {
+  NSInvocation *invocation;
+  std::string selectorName;
+  std::string typeEncoding;
+  // The invocation itself stores the return value, so we don't need separate storage
+  // BlockingCall ensures the callback completes before returning, so no sync primitives needed
+};
+
 // Stores information about a protocol implementation instance
 struct ProtocolImplementation {
-  std::unordered_map<std::string, Napi::FunctionReference> callbacks;
+  std::unordered_map<std::string, Napi::ThreadSafeFunction> callbacks;
+  std::unordered_map<std::string, Napi::FunctionReference> jsCallbacks; // Original JS functions for direct calls
   std::unordered_map<std::string, std::string> typeEncodings;
   std::string className;
-  // Note: We don't store Napi::Env directly as it's unsafe beyond callback scope.
-  // Instead, we retrieve the env from the FunctionReference callbacks when needed.
+  napi_env env; // Store the environment for direct calls
+  pthread_t js_thread; // Store the JS thread ID
 };
 
 // Global map: instance pointer -> implementation details

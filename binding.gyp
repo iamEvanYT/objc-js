@@ -8,7 +8,8 @@
                 "src/native/protocol-impl.mm"
             ],
             "defines": [
-                "NODE_ADDON_API_CPP_EXCEPTIONS"
+                "NODE_ADDON_API_CPP_EXCEPTIONS",
+                "NAPI_VERSION=6"
             ],
             "include_dirs": [
                 "<!@(node -p \"require('node-addon-api').include\")"

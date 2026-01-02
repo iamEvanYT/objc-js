@@ -17,9 +17,12 @@
   },
   "files": [
     "dist/",
-    "build/Release/nobjc_native.node"
+    "build/Release/nobjc_native.node",
+    "binding.gyp",
+    "src/native"
   ],
   "scripts": {
+    "install": "node-gyp rebuild",
     "build-native": "node-gyp build",
     "build-scripts": "tsc --project scripts/tsconfig.json",
     "build-source": "tsc --project src/ts/tsconfig.json",
@@ -36,13 +39,15 @@
     "format": "prettier --write \"**/*.{ts,js,json,md}\"",
     "preinstall-disabled": "npm run build-scripts && npm run make-clangd-config"
   },
-  "version": "0.0.8",
+  "version": "0.0.11",
   "description": "Objective-C bridge for Node.js",
   "main": "dist/index.js",
+  "dependencies": {
+    "node-addon-api": "^8.5.0"
+  },
   "devDependencies": {
     "@types/bun": "latest",
     "@types/node": "^20.0.0",
-    "node-addon-api": "^8.5.0",
     "node-gyp": "^11.4.2",
     "prettier": "^3.7.4",
     "typescript": "^5.9.3"
