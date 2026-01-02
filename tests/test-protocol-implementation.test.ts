@@ -74,6 +74,18 @@ describe("Protocol Implementation Tests", () => {
     expect(respondsToDescription).toBe(true);
   });
 
+  test("should respond to implemented protocol methods", () => {
+    const delegate = NobjcProtocol.implement("TestProtocol", {
+      "customMethod:": (arg: any) => {}
+    });
+
+    const respondsToCustomMethod = (delegate as any).respondsToSelector$("customMethod:");
+    expect(respondsToCustomMethod).toBe(true);
+
+    const respondsToNonExistentMethod = (delegate as any).respondsToSelector$("nonExistentMethod:");
+    expect(respondsToNonExistentMethod).toBe(false);
+  });
+
   test("should create comparison delegate for array sorting", () => {
     let comparisonCallCount = 0;
 
@@ -164,5 +176,27 @@ describe("Protocol Implementation Tests", () => {
       // If NSCopying is not available, skip the test
       expect(true).toBe(true);
     }
+  });
+
+  test("should actually invoke callback when method is called via performSelector", () => {
+    let callbackInvoked = false;
+    let receivedArg: any = null;
+
+    const delegate = NobjcProtocol.implement("TestProtocol", {
+      "handleString:": (arg: any) => {
+        callbackInvoked = true;
+        receivedArg = arg;
+      }
+    });
+
+    // Create an NSString to pass as argument
+    const testString = NSString.stringWithUTF8String$("TestValue");
+
+    // Call the method via performSelector:withObject:
+    (delegate as any).performSelector$withObject$("handleString:", testString);
+
+    expect(callbackInvoked).toBe(true);
+    expect(receivedArg).not.toBeNull();
+    // The callback was successfully invoked! This proves protocol callbacks work.
   });
 });

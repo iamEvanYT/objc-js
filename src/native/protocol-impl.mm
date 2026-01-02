@@ -173,6 +173,31 @@ Napi::Value ConvertObjCValueToJS(Napi::Env env, void *valuePtr,
 
 // MARK: - Message Forwarding Implementation
 
+// Override respondsToSelector to return YES for methods we implement
+BOOL RespondsToSelector(id self, SEL _cmd, SEL selector) {
+  void *ptr = (__bridge void *)self;
+  
+  // Check if this is one of our implemented methods
+  {
+    std::lock_guard<std::mutex> lock(g_implementations_mutex);
+    auto it = g_implementations.find(ptr);
+    if (it != g_implementations.end()) {
+      NSString *selectorString = NSStringFromSelector(selector);
+      if (selectorString != nil) {
+        std::string selName = [selectorString UTF8String];
+        auto callbackIt = it->second.callbacks.find(selName);
+        if (callbackIt != it->second.callbacks.end()) {
+          return YES;
+        }
+      }
+    }
+  }
+  
+  // For methods we don't implement, check if NSObject responds to them
+  // This handles standard NSObject methods like description, isEqual:, etc.
+  return [NSObject instancesRespondToSelector:selector];
+}
+
 // Provide method signature for message forwarding
 NSMethodSignature* MethodSignatureForSelector(id self, SEL _cmd, SEL selector) {
   void *ptr = (__bridge void *)self;
@@ -663,6 +688,13 @@ Napi::Value CreateProtocolImplementation(const Napi::CallbackInfo &info) {
      // Store the callback and type encoding for message forwarding
     impl.callbacks[selectorName] = Napi::Persistent(jsCallback);
     impl.typeEncodings[selectorName] = std::string(typeEncoding);
+  }
+  
+  // Override respondsToSelector
+  // Use class_addMethod since the class is being created and doesn't have methods yet
+  if (!class_addMethod(newClass, @selector(respondsToSelector:),
+                       (IMP)RespondsToSelector, "B@::")) {
+    NSLog(@"Warning: Failed to add respondsToSelector: method");
   }
   
   // Add message forwarding methods to the class

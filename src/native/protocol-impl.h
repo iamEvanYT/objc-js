@@ -36,6 +36,9 @@ extern std::unordered_map<void *, ProtocolImplementation> g_implementations;
 // Main entry point: creates a new Objective-C class that implements a protocol
 Napi::Value CreateProtocolImplementation(const Napi::CallbackInfo &info);
 
+// Override respondsToSelector to return YES for implemented methods
+BOOL RespondsToSelector(id self, SEL _cmd, SEL selector);
+
 // Method signature provider for message forwarding
 NSMethodSignature* MethodSignatureForSelector(id self, SEL _cmd, SEL selector);
 
