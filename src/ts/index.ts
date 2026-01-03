@@ -4,7 +4,9 @@ import {
   ObjcObject,
   GetPointer,
   FromPointer,
-  CreateProtocolImplementation
+  CreateProtocolImplementation,
+  DefineClass,
+  CallSuper
 } from "./native.js";
 import { NobjcNative } from "./native.js";
 
@@ -231,4 +233,181 @@ function fromPointer(pointer: Buffer | bigint): NobjcObject {
   return new NobjcObject(nativeObj);
 }
 
-export { NobjcLibrary, NobjcObject, NobjcMethod, NobjcProtocol, getPointer, fromPointer };
+/**
+ * Method definition for defining a class method.
+ */
+interface MethodDefinition {
+  /**
+   * Objective-C type encoding string.
+   * Common encodings:
+   * - @ = id (object)
+   * - : = SEL (selector)
+   * - v = void
+   * - B = BOOL
+   * - q = long long / NSInteger (64-bit)
+   * - Q = unsigned long long / NSUInteger (64-bit)
+   * - ^@ = id* (pointer to object, e.g., NSError**)
+   * - @? = block
+   *
+   * Example: "@@:@^@" means:
+   * - Return: @ (id)
+   * - self: @ (id)
+   * - _cmd: : (SEL)
+   * - arg1: @ (NSArray*)
+   * - arg2: ^@ (NSError**)
+   */
+  types: string;
+
+  /**
+   * The JavaScript implementation.
+   * Receives (self, ...args) where self is the instance.
+   * For NSError** out-params, the arg is an object with { set(error), get() } methods.
+   */
+  implementation: (self: NobjcObject, ...args: any[]) => any;
+}
+
+/**
+ * Class definition for creating a new Objective-C class.
+ */
+interface ClassDefinition {
+  /** Name of the new Objective-C class (must be unique in the runtime) */
+  name: string;
+
+  /** Superclass - either a class name string or a NobjcObject representing a Class */
+  superclass: string | NobjcObject;
+
+  /** Optional: protocols to conform to */
+  protocols?: string[];
+
+  /** Instance methods to implement/override */
+  methods?: Record<string, MethodDefinition>;
+
+  /** Optional: class methods */
+  classMethods?: Record<string, MethodDefinition>;
+}
+
+/**
+ * API for defining new Objective-C classes at runtime.
+ *
+ * @example
+ * ```typescript
+ * // Define a subclass of NSObject
+ * const MyClass = NobjcClass.define({
+ *   name: "MyClass",
+ *   superclass: "NSObject",
+ *   protocols: ["NSCopying"],
+ *   methods: {
+ *     "init": {
+ *       types: "@@:",
+ *       implementation: (self) => {
+ *         return NobjcClass.super(self, "init");
+ *       }
+ *     },
+ *     "myMethod:": {
+ *       types: "@@:@",
+ *       implementation: (self, arg) => {
+ *         console.log("myMethod called with", arg);
+ *         return arg;
+ *       }
+ *     }
+ *   }
+ * });
+ *
+ * // Create an instance
+ * const instance = MyClass.alloc().init();
+ * instance.myMethod$(someArg);
+ * ```
+ */
+class NobjcClass {
+  /**
+   * Define a new Objective-C class at runtime.
+   *
+   * @param definition The class definition
+   * @returns A NobjcObject representing the new Class (can be used to alloc/init instances)
+   *
+   * @warning For private methods (like _requestContextWithRequests:error:), you must provide
+   * the correct type encoding manually since it cannot be introspected from protocols.
+   */
+  static define(definition: ClassDefinition): NobjcObject {
+    // Convert method implementations to wrap args and unwrap returns
+    const nativeDefinition: any = {
+      name: definition.name,
+      superclass: typeof definition.superclass === "string" ? definition.superclass : unwrapArg(definition.superclass),
+      protocols: definition.protocols
+    };
+
+    if (definition.methods) {
+      nativeDefinition.methods = {};
+      for (const [selector, methodDef] of Object.entries(definition.methods)) {
+        const normalizedSelector = NobjcMethodNameToObjcSelector(selector);
+        nativeDefinition.methods[normalizedSelector] = {
+          types: methodDef.types,
+          implementation: (nativeSelf: any, ...nativeArgs: any[]) => {
+            // Wrap self
+            const wrappedSelf = wrapObjCObjectIfNeeded(nativeSelf) as NobjcObject;
+
+            // Wrap args, but preserve out-param objects as-is
+            const wrappedArgs = nativeArgs.map((arg) => {
+              // Check if it's an out-param object (has 'set' method)
+              if (arg && typeof arg === "object" && typeof arg.set === "function") {
+                // Keep out-param objects as-is, but wrap the error objects they handle
+                return {
+                  set: (error: any) => arg.set(unwrapArg(error)),
+                  get: () => wrapObjCObjectIfNeeded(arg.get())
+                };
+              }
+              return wrapObjCObjectIfNeeded(arg);
+            });
+
+            // Call the user's implementation
+            const result = methodDef.implementation(wrappedSelf, ...wrappedArgs);
+
+            // Unwrap the return value
+            return unwrapArg(result);
+          }
+        };
+      }
+    }
+
+    // Call native DefineClass
+    const nativeClass = DefineClass(nativeDefinition);
+
+    // Return wrapped Class object
+    return new NobjcObject(nativeClass);
+  }
+
+  /**
+   * Call the superclass implementation of a method.
+   * Use this inside a method implementation to invoke super.
+   *
+   * @param self The instance (the first argument to your implementation)
+   * @param selector The selector string (e.g., "init" or "_requestContextWithRequests:error:")
+   * @param args Additional arguments to pass to super
+   * @returns The result of the super call
+   *
+   * @example
+   * ```typescript
+   * methods: {
+   *   "init": {
+   *     types: "@@:",
+   *     implementation: (self) => {
+   *       // Call [super init]
+   *       const result = NobjcClass.super(self, "init");
+   *       // Do additional setup...
+   *       return result;
+   *     }
+   *   }
+   * }
+   * ```
+   */
+  static super(self: NobjcObject, selector: string, ...args: any[]): any {
+    const normalizedSelector = NobjcMethodNameToObjcSelector(selector);
+    const nativeSelf = unwrapArg(self);
+    const unwrappedArgs = args.map(unwrapArg);
+
+    const result = CallSuper(nativeSelf, normalizedSelector, ...unwrappedArgs);
+    return wrapObjCObjectIfNeeded(result);
+  }
+}
+
+export { NobjcLibrary, NobjcObject, NobjcMethod, NobjcProtocol, NobjcClass, getPointer, fromPointer };

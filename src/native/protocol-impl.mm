@@ -146,7 +146,7 @@ Napi::Value CreateProtocolImplementation(const Napi::CallbackInfo &info) {
   }
   
   if (isElectron) {
-    NSLog(@"[DEBUG] Detected Electron runtime, will always use TSFN path");
+    // Electron runtime detected, will always use TSFN path
   }
 
   // Store callbacks for this instance (we'll set the instance pointer later)

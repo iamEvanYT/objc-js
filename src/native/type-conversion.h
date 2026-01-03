@@ -472,21 +472,19 @@ inline void SetInvocationReturnFromJS(NSInvocation *invocation,
     break;
   }
   case '@': {
-    // Log the result
-    NSLog(@"Result for selector %s: %s", selectorName, result.IsObject() ? "Object" : "nil");
-
     if (result.IsObject()) {
       Napi::Object resultObj = result.As<Napi::Object>();
       if (resultObj.InstanceOf(ObjcObject::constructor.Value())) {
         ObjcObject *objcObj = Napi::ObjectWrap<ObjcObject>::Unwrap(resultObj);
         id objcValue = objcObj->objcObject;
-        NSLog(@"ObjcObject: %@", objcValue);
         [invocation setReturnValue:&objcValue];
-      } else {
-        NSLog(@"Warning: result object is not an ObjcObject instance");
+      } else if (result.IsNull() || result.IsUndefined()) {
+        id nilValue = nil;
+        [invocation setReturnValue:&nilValue];
       }
-    } else {
-      NSLog(@"Warning: result is not an object (type: %d)", result.Type());
+    } else if (result.IsNull() || result.IsUndefined()) {
+      id nilValue = nil;
+      [invocation setReturnValue:&nilValue];
     }
     break;
   }

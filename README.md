@@ -21,9 +21,39 @@ const str = NSString.stringWithUTF8String$("Hello, World!");
 console.log(str.toString());
 ```
 
+### Subclassing Objective-C Classes
+
+**objc-js** supports defining new Objective-C classes and subclassing existing ones from JavaScript. This allows you to override methods, implement custom behavior, and integrate deeply with macOS frameworks.
+
+See [Subclassing Documentation](./docs/subclassing.md) for detailed usage and examples.
+
+#### Quick Example
+
+```typescript
+import { NobjcClass } from "objc-js";
+
+const MyClass = NobjcClass.define({
+  name: "MyCustomClass",
+  superclass: "NSObject",
+  methods: {
+    description: {
+      types: "@@:", // returns NSString
+      implementation: (self) => {
+        const superDesc = NobjcClass.super(self, "description");
+        const prefix = NSString.stringWithUTF8String$("Custom: ");
+        return prefix.stringByAppendingString$(superDesc);
+      }
+    }
+  }
+});
+
+const instance = MyClass.alloc().init();
+console.log(instance.description().toString()); // "Custom: <MyCustomClass: 0x...>"
+```
+
 ### Protocol Implementation
 
-**objc-js** now supports creating Objective-C protocol implementations from JavaScript. This allows you to create delegate objects that can be passed to Objective-C APIs.
+**objc-js** supports creating Objective-C protocol implementations from JavaScript. This allows you to create delegate objects that can be passed to Objective-C APIs.
 
 #### Creating a Protocol Implementation
 
@@ -124,6 +154,31 @@ Wrapper for Objective-C objects. Methods can be called using the `$` notation.
 ```typescript
 const result = object.methodName$arg1$arg2$(arg1, arg2);
 ```
+
+#### `NobjcClass`
+
+Static class for defining new Objective-C classes and subclassing existing ones.
+
+```typescript
+NobjcClass.define(definition: ClassDefinition): NobjcObject
+```
+
+**Parameters:**
+
+- `definition.name`: The name of the new Objective-C class (must be unique)
+- `definition.superclass`: The name of the superclass (e.g., "NSObject", "NSView")
+- `definition.protocols`: (Optional) Array of protocol names to conform to
+- `definition.methods`: Object mapping selector names to method definitions
+
+**Returns:** The new class object (can call `.alloc().init()` on it)
+
+See [Subclassing Documentation](./docs/subclassing.md) for more details.
+
+```typescript
+NobjcClass.super(self: NobjcObject, selector: string, ...args: any[]): any
+```
+
+Call the superclass implementation of a method. Currently only supports zero-argument methods.
 
 #### `NobjcProtocol`
 

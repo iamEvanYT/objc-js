@@ -13,6 +13,7 @@
 @class NSInvocation;
 #else
 typedef struct NSInvocation NSInvocation;
+typedef struct objc_class *Class;
 #endif
 
 // MARK: - Data Structures
@@ -27,6 +28,10 @@ struct InvocationData {
   std::mutex *completionMutex;
   std::condition_variable *completionCv;
   bool *isComplete;
+  // For subclass method calls: the instance pointer (for super calls)
+  void *instancePtr;
+  // For subclass method calls: the superclass for super calls
+  void *superClassPtr;
 };
 
 // Stores information about a protocol implementation instance
@@ -47,6 +52,35 @@ struct ProtocolImplementation {
   bool isElectron;
 };
 
+// MARK: - Subclass Storage
+
+// Information about an overridden method in a subclass
+struct SubclassMethodInfo {
+  Napi::ThreadSafeFunction callback;
+  Napi::FunctionReference jsCallback;
+  std::string typeEncoding;
+  std::string selectorName;
+  bool isClassMethod;
+};
+
+// Stores information about a JS-defined subclass
+struct SubclassImplementation {
+  // Class name
+  std::string className;
+  // The Objective-C Class object
+  void *objcClass;       // Class
+  // The superclass for super calls
+  void *superClass;      // Class
+  // Methods defined by JS (selector -> info)
+  std::unordered_map<std::string, SubclassMethodInfo> methods;
+  // Store the environment for direct calls
+  napi_env env;
+  // Store the JS thread ID for thread detection
+  pthread_t js_thread;
+  // Flag to indicate if running in Electron
+  bool isElectron;
+};
+
 // MARK: - Global Storage
 
 // Global map: instance pointer -> implementation details
@@ -54,6 +88,11 @@ struct ProtocolImplementation {
 // object
 extern std::unordered_map<void *, ProtocolImplementation> g_implementations;
 extern std::mutex g_implementations_mutex;
+
+// Global map: Class pointer -> subclass implementation details
+// This stores information about JS-defined subclasses
+extern std::unordered_map<void *, SubclassImplementation> g_subclasses;
+extern std::mutex g_subclasses_mutex;
 
 // MARK: - Storage Access Helpers
 
@@ -73,6 +112,18 @@ inline ProtocolImplementation *
 FindImplementation(void *instancePtr) {
   auto it = g_implementations.find(instancePtr);
   if (it != g_implementations.end()) {
+    return &it->second;
+  }
+  return nullptr;
+}
+
+// Look up subclass implementation for a Class pointer
+// Returns nullptr if not found
+// Caller must hold g_subclasses_mutex
+inline SubclassImplementation *
+FindSubclassImplementation(void *classPtr) {
+  auto it = g_subclasses.find(classPtr);
+  if (it != g_subclasses.end()) {
     return &it->second;
   }
   return nullptr;
