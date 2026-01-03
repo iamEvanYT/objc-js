@@ -18,11 +18,19 @@ typedef struct objc_class *Class;
 
 // MARK: - Data Structures
 
+// Callback type for method forwarding
+enum class CallbackType {
+  Protocol,  // Protocol implementation - args start at index 2
+  Subclass   // Subclass override - include self at index 0 as first JS arg
+};
+
 // Data passed from native thread to JS thread for invocation handling
 struct InvocationData {
   NSInvocation *invocation;
   std::string selectorName;
   std::string typeEncoding;
+  // Type of callback (protocol or subclass)
+  CallbackType callbackType;
   // Synchronization: we use NonBlockingCall + runloop pumping to avoid
   // deadlocks in Electron while still getting return values
   std::mutex *completionMutex;

@@ -20,6 +20,11 @@ typedef struct NSInvocation NSInvocation;
 void CallJSCallback(Napi::Env env, Napi::Function jsCallback,
                     InvocationData *data);
 
+// Helper function to fallback to ThreadSafeFunction when direct call fails
+// Returns true if fallback succeeded, false otherwise
+bool FallbackToTSFN(Napi::ThreadSafeFunction &tsfn, InvocationData *data,
+                    const std::string &selectorName);
+
 // MARK: - ObjC Runtime Method Implementations
 
 // Override respondsToSelector to return YES for methods we implement

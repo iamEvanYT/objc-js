@@ -1,4 +1,5 @@
 #include "method-forwarding.h"
+#include "debug.h"
 #include "ObjcObject.h"
 #include "protocol-storage.h"
 #include "type-conversion.h"
@@ -10,16 +11,17 @@
 // MARK: - ThreadSafeFunction Callback Handler
 
 // This function runs on the JavaScript thread
+// Handles both protocol implementation and subclass method forwarding
 void CallJSCallback(Napi::Env env, Napi::Function jsCallback,
                     InvocationData *data) {
   if (!data) {
-    NSLog(@"Error: InvocationData is null in CallJSCallback");
+    NOBJC_ERROR("InvocationData is null in CallJSCallback");
     return;
   }
 
   // Check if the callback is valid before proceeding
   if (jsCallback.IsEmpty()) {
-    NSLog(@"Error: jsCallback is null/empty in CallJSCallback for selector %s",
+    NOBJC_ERROR("jsCallback is null/empty in CallJSCallback for selector %s",
           data->selectorName.c_str());
     if (data->invocation) {
       [data->invocation release];
@@ -31,7 +33,7 @@ void CallJSCallback(Napi::Env env, Napi::Function jsCallback,
 
   NSInvocation *invocation = data->invocation;
   if (!invocation) {
-    NSLog(@"Error: NSInvocation is null in CallJSCallback");
+    NOBJC_ERROR("NSInvocation is null in CallJSCallback");
     SignalInvocationComplete(data);
     delete data;
     return;
@@ -40,7 +42,7 @@ void CallJSCallback(Napi::Env env, Napi::Function jsCallback,
   // Extract arguments using NSInvocation
   NSMethodSignature *sig = [invocation methodSignature];
   if (!sig) {
-    NSLog(@"Error: Failed to get method signature for selector %s",
+    NOBJC_ERROR("Failed to get method signature for selector %s",
           data->selectorName.c_str());
     SignalInvocationComplete(data);
     [invocation release];
@@ -50,15 +52,39 @@ void CallJSCallback(Napi::Env env, Napi::Function jsCallback,
 
   std::vector<napi_value> jsArgs;
 
-  // Skip first two arguments (self and _cmd)
+  // For subclass methods, include 'self' as first JavaScript argument
+  if (data->callbackType == CallbackType::Subclass) {
+    NOBJC_LOG("CallJSCallback (Subclass): including self for selector %s",
+              data->selectorName.c_str());
+    __unsafe_unretained id selfObj;
+    [invocation getArgument:&selfObj atIndex:0];
+    jsArgs.push_back(ObjcObject::NewInstance(env, selfObj));
+  } else {
+    NOBJC_LOG("CallJSCallback (Protocol): skipping self for selector %s",
+              data->selectorName.c_str());
+  }
+
+  // Extract remaining arguments (skip self and _cmd, start at index 2)
   for (NSUInteger i = 2; i < [sig numberOfArguments]; i++) {
     const char *type = [sig getArgumentTypeAtIndex:i];
     SimplifiedTypeEncoding argType(type);
+    
+    // Handle out-parameters (e.g., NSError**) by passing null
+    // This avoids creating N-API Function objects which triggers Bun crashes
+    if (argType[0] == '^' && argType[1] == '@') {
+      NOBJC_LOG("CallJSCallback: passing null for out-parameter at index %lu", 
+                (unsigned long)i);
+      jsArgs.push_back(env.Null());
+      continue;
+    }
+    
     jsArgs.push_back(ExtractInvocationArgumentToJS(env, invocation, i, argType[0]));
   }
 
   // Call the JavaScript callback
   try {
+    NOBJC_LOG("CallJSCallback: calling JS function for selector %s with %zu args",
+              data->selectorName.c_str(), jsArgs.size());
     Napi::Value result = jsCallback.Call(jsArgs);
 
     // Handle return value if the method expects one
@@ -70,13 +96,13 @@ void CallJSCallback(Napi::Env env, Napi::Function jsCallback,
                                 data->selectorName.c_str());
     }
   } catch (const Napi::Error &e) {
-    NSLog(@"Error calling JavaScript callback for %s: %s",
+    NOBJC_ERROR("Error calling JavaScript callback for %s: %s",
           data->selectorName.c_str(), e.what());
   } catch (const std::exception &e) {
-    NSLog(@"Exception calling JavaScript callback for %s: %s",
+    NOBJC_ERROR("Exception calling JavaScript callback for %s: %s",
           data->selectorName.c_str(), e.what());
   } catch (...) {
-    NSLog(@"Unknown error calling JavaScript callback for %s",
+    NOBJC_ERROR("Unknown error calling JavaScript callback for %s",
           data->selectorName.c_str());
   }
 
@@ -87,6 +113,51 @@ void CallJSCallback(Napi::Env env, Napi::Function jsCallback,
   // Release the invocation that we retained in ForwardInvocation
   [invocation release];
   delete data;
+}
+
+// MARK: - Fallback Helper
+
+// Helper function to fallback to ThreadSafeFunction when direct call fails
+// This is used when direct JS callback invocation fails (e.g., in Electron)
+bool FallbackToTSFN(Napi::ThreadSafeFunction &tsfn, InvocationData *data,
+                    const std::string &selectorName) {
+  NOBJC_LOG("FallbackToTSFN: Attempting fallback for selector %s", 
+            selectorName.c_str());
+  
+  // Set up synchronization primitives
+  std::mutex completionMutex;
+  std::condition_variable completionCv;
+  bool isComplete = false;
+
+  data->completionMutex = &completionMutex;
+  data->completionCv = &completionCv;
+  data->isComplete = &isComplete;
+
+  // Call via ThreadSafeFunction
+  napi_status status = tsfn.NonBlockingCall(data, CallJSCallback);
+  tsfn.Release();
+
+  if (status != napi_ok) {
+    NOBJC_ERROR("FallbackToTSFN failed for selector %s (status: %d)",
+                selectorName.c_str(), status);
+    return false;
+  }
+
+  // Wait for callback by pumping CFRunLoop
+  CFTimeInterval timeout = 0.001; // 1ms per iteration
+  while (true) {
+    {
+      std::unique_lock<std::mutex> lock(completionMutex);
+      if (isComplete) {
+        break;
+      }
+    }
+    CFRunLoopRunInMode(kCFRunLoopDefaultMode, timeout, true);
+  }
+  
+  NOBJC_LOG("FallbackToTSFN: Successfully completed for selector %s", 
+            selectorName.c_str());
+  return true;
 }
 
 // MARK: - Message Forwarding Implementation
@@ -137,7 +208,7 @@ NSMethodSignature *MethodSignatureForSelector(id self, SEL _cmd, SEL selector) {
 // Handle forwarded invocations
 void ForwardInvocation(id self, SEL _cmd, NSInvocation *invocation) {
   if (!invocation) {
-    NSLog(@"Error: ForwardInvocation called with nil invocation");
+    NOBJC_ERROR("ForwardInvocation called with nil invocation");
     return;
   }
 
@@ -149,7 +220,7 @@ void ForwardInvocation(id self, SEL _cmd, NSInvocation *invocation) {
   SEL selector = [invocation selector];
   NSString *selectorString = NSStringFromSelector(selector);
   if (!selectorString) {
-    NSLog(@"Error: Failed to convert selector to string");
+    NOBJC_ERROR("Failed to convert selector to string");
     return;
   }
 
@@ -168,15 +239,13 @@ void ForwardInvocation(id self, SEL _cmd, NSInvocation *invocation) {
     std::lock_guard<std::mutex> lock(g_implementations_mutex);
     auto it = g_implementations.find(ptr);
     if (it == g_implementations.end()) {
-      NSLog(@"Warning: Protocol implementation not found for instance %p",
-            self);
+      NOBJC_WARN("Protocol implementation not found for instance %p", self);
       return;
     }
 
     auto callbackIt = it->second.callbacks.find(selectorName);
     if (callbackIt == it->second.callbacks.end()) {
-      NSLog(@"Warning: Callback not found for selector %s",
-            selectorName.c_str());
+      NOBJC_WARN("Callback not found for selector %s", selectorName.c_str());
       return;
     }
 
@@ -187,7 +256,7 @@ void ForwardInvocation(id self, SEL _cmd, NSInvocation *invocation) {
     tsfn = callbackIt->second;
     napi_status acq_status = tsfn.Acquire();
     if (acq_status != napi_ok) {
-      NSLog(@"Warning: Failed to acquire ThreadSafeFunction for selector %s",
+      NOBJC_WARN("Failed to acquire ThreadSafeFunction for selector %s",
             selectorName.c_str());
       return;
     }
@@ -216,6 +285,7 @@ void ForwardInvocation(id self, SEL _cmd, NSInvocation *invocation) {
   data->invocation = invocation;
   data->selectorName = selectorName;
   data->typeEncoding = typeEncoding;
+  data->callbackType = CallbackType::Protocol;
 
   napi_status status;
 
@@ -234,9 +304,7 @@ void ForwardInvocation(id self, SEL _cmd, NSInvocation *invocation) {
       std::lock_guard<std::mutex> lock(g_implementations_mutex);
       auto it = g_implementations.find(ptr);
       if (it == g_implementations.end()) {
-        NSLog(@"Warning: Protocol implementation not found for instance %p "
-              @"(JS thread path)",
-              self);
+        NOBJC_WARN("Protocol implementation not found for instance %p (JS thread path)", self);
         [invocation release];
         delete data;
         return;
@@ -244,8 +312,7 @@ void ForwardInvocation(id self, SEL _cmd, NSInvocation *invocation) {
 
       auto jsCallbackIt = it->second.jsCallbacks.find(selectorName);
       if (jsCallbackIt == it->second.jsCallbacks.end()) {
-        NSLog(@"Warning: JS callback not found for selector %s "
-              @"(JS thread path)",
+        NOBJC_WARN("JS callback not found for selector %s (JS thread path)",
               selectorName.c_str());
         [invocation release];
         delete data;
@@ -269,14 +336,11 @@ void ForwardInvocation(id self, SEL _cmd, NSInvocation *invocation) {
       CallJSCallback(callEnv, jsFn, data);
       // CallJSCallback releases invocation and deletes data.
     } catch (const std::exception &e) {
-      NSLog(@"Error calling JS callback directly (likely invalid env in "
-            @"Electron): %s",
-            e.what());
-      NSLog(@"Falling back to ThreadSafeFunction for selector %s",
-            selectorName.c_str());
+      NOBJC_ERROR("Error calling JS callback directly (likely invalid env in Electron): %s", e.what());
+      NOBJC_LOG("Falling back to ThreadSafeFunction for selector %s", selectorName.c_str());
       
       // Fallback to TSFN if direct call fails (e.g., invalid env in Electron)
-      // We need to re-acquire the TSFN and set up sync primitives
+      // We need to re-acquire the TSFN
       {
         std::lock_guard<std::mutex> lock(g_implementations_mutex);
         auto it = g_implementations.find(ptr);
@@ -286,30 +350,8 @@ void ForwardInvocation(id self, SEL _cmd, NSInvocation *invocation) {
             tsfn = callbackIt->second;
             napi_status acq_status = tsfn.Acquire();
             if (acq_status == napi_ok) {
-              // Set up synchronization for fallback path
-              std::mutex completionMutex;
-              std::condition_variable completionCv;
-              bool isComplete = false;
-
-              data->completionMutex = &completionMutex;
-              data->completionCv = &completionCv;
-              data->isComplete = &isComplete;
-
-              status = tsfn.NonBlockingCall(data, CallJSCallback);
-              tsfn.Release();
-
-              if (status == napi_ok) {
-                // Wait for callback by pumping CFRunLoop
-                CFTimeInterval timeout = 0.001; // 1ms per iteration
-                while (true) {
-                  {
-                    std::unique_lock<std::mutex> lock(completionMutex);
-                    if (isComplete) {
-                      break;
-                    }
-                  }
-                  CFRunLoopRunInMode(kCFRunLoopDefaultMode, timeout, true);
-                }
+              // Use helper function for fallback
+              if (FallbackToTSFN(tsfn, data, selectorName)) {
                 return; // Data cleaned up in callback
               }
             }
@@ -337,8 +379,7 @@ void ForwardInvocation(id self, SEL _cmd, NSInvocation *invocation) {
     tsfn.Release();
 
     if (status != napi_ok) {
-      NSLog(@"Error: Failed to call ThreadSafeFunction for selector %s "
-            @"(status: %d)",
+      NOBJC_ERROR("Failed to call ThreadSafeFunction for selector %s (status: %d)",
             selectorName.c_str(), status);
       [invocation release];
       delete data;
@@ -384,8 +425,7 @@ void DeallocImplementation(id self, SEL _cmd) {
         it->second.typeEncodings.clear();
       } catch (...) {
         // Ignore errors during cleanup
-        NSLog(@"Warning: Exception during callback cleanup for instance %p",
-              self);
+        NOBJC_WARN("Exception during callback cleanup for instance %p", self);
       }
       g_implementations.erase(it);
     }

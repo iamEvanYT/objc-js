@@ -1,4 +1,5 @@
 #include "protocol-impl.h"
+#include "debug.h"
 #include "method-forwarding.h"
 #include "ObjcObject.h"
 #include "protocol-storage.h"
@@ -103,8 +104,7 @@ Napi::Value CreateProtocolImplementation(const Napi::CallbackInfo &info) {
     protocol = objc_getProtocol(protocolName.c_str());
     if (protocol == nullptr) {
       // Log warning but continue (for informal protocols)
-      NSLog(@"Warning: Protocol %s not found, creating class without protocol "
-            @"conformance",
+      NOBJC_WARN("Protocol %s not found, creating class without protocol conformance",
             protocolName.c_str());
     }
   }
@@ -173,7 +173,7 @@ Napi::Value CreateProtocolImplementation(const Napi::CallbackInfo &info) {
     Napi::Value value = methodImplementations.Get(key);
 
     if (!value.IsFunction()) {
-      NSLog(@"Warning: Value for selector %s is not a function, skipping",
+      NOBJC_WARN("Value for selector %s is not a function, skipping",
             selectorName.c_str());
       continue;
     }
@@ -218,8 +218,7 @@ Napi::Value CreateProtocolImplementation(const Napi::CallbackInfo &info) {
       defaultTypeEncodings.push_back(std::move(defaultEncoding));
       typeEncoding = defaultTypeEncodings.back().c_str();
 
-      NSLog(@"Warning: No type encoding found for selector %s, using default: "
-            @"%s",
+      NOBJC_WARN("No type encoding found for selector %s, using default: %s",
             selectorName.c_str(), typeEncoding);
     }
 
@@ -244,7 +243,7 @@ Napi::Value CreateProtocolImplementation(const Napi::CallbackInfo &info) {
   // methods yet
   if (!class_addMethod(newClass, @selector(respondsToSelector:),
                        (IMP)RespondsToSelector, "B@::")) {
-    NSLog(@"Warning: Failed to add respondsToSelector: method");
+    NOBJC_WARN("Failed to add respondsToSelector: method");
   }
 
   // Add message forwarding methods to the class

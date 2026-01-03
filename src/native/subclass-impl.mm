@@ -1,5 +1,6 @@
 #include "subclass-impl.h"
 #include "bridge.h"
+#include "debug.h"
 #include "method-forwarding.h"
 #include "ObjcObject.h"
 #include "protocol-storage.h"
@@ -25,197 +26,6 @@ static NSMethodSignature *SubclassMethodSignatureForSelector(id self, SEL _cmd,
 static void SubclassForwardInvocation(id self, SEL _cmd,
                                        NSInvocation *invocation);
 static void SubclassDeallocImplementation(id self, SEL _cmd);
-
-// MARK: - Method Forwarding for Subclasses
-
-// This is called by ForwardInvocation when the invocation is for a subclass method
-void CallSubclassJSCallback(Napi::Env env, Napi::Function jsCallback,
-                            InvocationData *data) {
-  if (!data) {
-    NSLog(@"Error: InvocationData is null in CallSubclassJSCallback");
-    return;
-  }
-
-  if (jsCallback.IsEmpty()) {
-    NSLog(@"Error: jsCallback is null/empty in CallSubclassJSCallback for "
-          @"selector %s",
-          data->selectorName.c_str());
-    if (data->invocation) {
-      [data->invocation release];
-    }
-    SignalInvocationComplete(data);
-    delete data;
-    return;
-  }
-
-  NSInvocation *invocation = data->invocation;
-  if (!invocation) {
-    NSLog(@"Error: NSInvocation is null in CallSubclassJSCallback");
-    SignalInvocationComplete(data);
-    delete data;
-    return;
-  }
-
-  NSMethodSignature *sig = [invocation methodSignature];
-  if (!sig) {
-    NSLog(@"Error: Failed to get method signature for selector %s",
-          data->selectorName.c_str());
-    SignalInvocationComplete(data);
-    [invocation release];
-    delete data;
-    return;
-  }
-
-  std::vector<napi_value> jsArgs;
-
-  // First argument is always 'self' - wrap as NobjcObject
-  __unsafe_unretained id selfObj;
-  [invocation getArgument:&selfObj atIndex:0];
-  jsArgs.push_back(ObjcObject::NewInstance(env, selfObj));
-
-  // Parse type encoding to handle special cases like ^@ (pointer to object)
-  std::vector<std::string> argTypes;
-  const char *typeEnc = data->typeEncoding.c_str();
-  
-  // Parse the type encoding string
-  const char *ptr = typeEnc;
-  while (*ptr) {
-    // Skip digits (stack offsets)
-    while (*ptr >= '0' && *ptr <= '9')
-      ptr++;
-    if (*ptr == '\0')
-      break;
-
-    const char *typeStart = ptr;
-
-    // Skip qualifiers
-    while (*ptr == 'r' || *ptr == 'n' || *ptr == 'N' || *ptr == 'o' ||
-           *ptr == 'O' || *ptr == 'R' || *ptr == 'V') {
-      ptr++;
-    }
-
-    char mainType = *ptr;
-    ptr++;
-
-    // Handle pointer types
-    if (mainType == '^') {
-      // Include the pointed-to type
-      if (*ptr)
-        ptr++;
-      argTypes.push_back(std::string(typeStart, ptr - typeStart));
-    }
-    // Handle struct/union types
-    else if (mainType == '{' || mainType == '(') {
-      char closingChar = (mainType == '{') ? '}' : ')';
-      int depth = 1;
-      while (*ptr && depth > 0) {
-        if (*ptr == mainType)
-          depth++;
-        else if (*ptr == closingChar)
-          depth--;
-        ptr++;
-      }
-      argTypes.push_back(std::string(typeStart, ptr - typeStart));
-    } else {
-      argTypes.push_back(std::string(typeStart, ptr - typeStart));
-    }
-  }
-
-  // Skip first 3 types (return, self, _cmd) to get argument types
-  // Arguments start at index 2 (after self and _cmd)
-  for (NSUInteger i = 2; i < [sig numberOfArguments]; i++) {
-    const char *type = [sig getArgumentTypeAtIndex:i];
-    SimplifiedTypeEncoding argType(type);
-
-    // Check for ^@ (pointer to object, e.g., NSError**)
-    if (argType[0] == '^') {
-      const char *nextType = argType.c_str() + 1;
-      if (*nextType == '@') {
-        // This is an NSError** or similar - create a setter object
-        id __autoreleasing *errorPtr = nullptr;
-        [invocation getArgument:&errorPtr atIndex:i];
-
-        Napi::Object outParamObj = Napi::Object::New(env);
-
-        // Capture the pointer in the lambda
-        // We need to be careful here - the pointer must remain valid
-        if (errorPtr != nullptr) {
-          // Create a weak capture that stores the pointer value
-          id __autoreleasing **ptrHolder = new (id __autoreleasing *)(errorPtr);
-
-          outParamObj.Set(
-              "set", Napi::Function::New(
-                         env,
-                         [ptrHolder](const Napi::CallbackInfo &info) {
-                           if (info.Length() > 0 && *ptrHolder != nullptr) {
-                             if (info[0].IsNull() || info[0].IsUndefined()) {
-                               **ptrHolder = nil;
-                             } else if (info[0].IsObject()) {
-                               Napi::Object obj = info[0].As<Napi::Object>();
-                               if (obj.InstanceOf(
-                                       ObjcObject::constructor.Value())) {
-                                 ObjcObject *objcObj =
-                                     Napi::ObjectWrap<ObjcObject>::Unwrap(obj);
-                                 **ptrHolder = objcObj->objcObject;
-                               }
-                             }
-                           }
-                           return info.Env().Undefined();
-                         },
-                         "setOutParam"));
-
-          // Add a getter to read current value
-          outParamObj.Set(
-              "get", Napi::Function::New(
-                         env,
-                         [ptrHolder](const Napi::CallbackInfo &info) -> Napi::Value {
-                           Napi::Env env = info.Env();
-                           if (*ptrHolder != nullptr && **ptrHolder != nil) {
-                             return ObjcObject::NewInstance(env, **ptrHolder);
-                           }
-                           return env.Null();
-                         },
-                         "getOutParam"));
-
-          // Store pointer holder for cleanup (prevent leak)
-          // Note: In a production implementation, we'd need better cleanup
-        }
-
-        jsArgs.push_back(outParamObj);
-        continue;
-      }
-    }
-
-    // Standard argument extraction
-    jsArgs.push_back(ExtractInvocationArgumentToJS(env, invocation, i, argType[0]));
-  }
-
-  try {
-    Napi::Value result = jsCallback.Call(jsArgs);
-
-    // Handle return value
-    const char *returnType = [sig methodReturnType];
-    SimplifiedTypeEncoding retType(returnType);
-
-    if (retType[0] != 'v') {
-      SetInvocationReturnFromJS(invocation, result, retType[0],
-                                data->selectorName.c_str());
-    }
-  } catch (const Napi::Error &e) {
-    NSLog(@"Error calling JavaScript callback for %s: %s",
-          data->selectorName.c_str(), e.what());
-  } catch (const std::exception &e) {
-    NSLog(@"Exception calling JavaScript callback for %s: %s",
-          data->selectorName.c_str(), e.what());
-  } catch (...) {
-    NSLog(@"Unknown error calling JavaScript callback for %s",
-          data->selectorName.c_str());
-  }
-
-  SignalInvocationComplete(data);
-  [invocation release];
-  delete data;
-}
 
 // MARK: - Subclass Method Forwarding Implementation
 
@@ -276,7 +86,7 @@ static NSMethodSignature *SubclassMethodSignatureForSelector(id self, SEL _cmd,
 static void SubclassForwardInvocation(id self, SEL _cmd,
                                        NSInvocation *invocation) {
   if (!invocation) {
-    NSLog(@"Error: SubclassForwardInvocation called with nil invocation");
+    NOBJC_ERROR("SubclassForwardInvocation called with nil invocation");
     return;
   }
 
@@ -286,7 +96,7 @@ static void SubclassForwardInvocation(id self, SEL _cmd,
   SEL selector = [invocation selector];
   NSString *selectorString = NSStringFromSelector(selector);
   if (!selectorString) {
-    NSLog(@"Error: Failed to convert selector to string");
+    NOBJC_ERROR("Failed to convert selector to string");
     [invocation release];
     return;
   }
@@ -305,14 +115,14 @@ static void SubclassForwardInvocation(id self, SEL _cmd,
     std::lock_guard<std::mutex> lock(g_subclasses_mutex);
     auto it = g_subclasses.find(clsPtr);
     if (it == g_subclasses.end()) {
-      NSLog(@"Warning: Subclass implementation not found for class %p", cls);
+      NOBJC_WARN("Subclass implementation not found for class %p", cls);
       [invocation release];
       return;
     }
 
     auto methodIt = it->second.methods.find(selectorName);
     if (methodIt == it->second.methods.end()) {
-      NSLog(@"Warning: Method not found for selector %s", selectorName.c_str());
+      NOBJC_WARN("Method not found for selector %s", selectorName.c_str());
       [invocation release];
       return;
     }
@@ -320,7 +130,7 @@ static void SubclassForwardInvocation(id self, SEL _cmd,
     tsfn = methodIt->second.callback;
     napi_status acq_status = tsfn.Acquire();
     if (acq_status != napi_ok) {
-      NSLog(@"Warning: Failed to acquire ThreadSafeFunction for selector %s",
+      NOBJC_WARN("Failed to acquire ThreadSafeFunction for selector %s",
             selectorName.c_str());
       [invocation release];
       return;
@@ -340,11 +150,12 @@ static void SubclassForwardInvocation(id self, SEL _cmd,
   data->typeEncoding = typeEncoding;
   data->instancePtr = (__bridge void *)self;
   data->superClassPtr = superClassPtr;
+  data->callbackType = CallbackType::Subclass;  // Set callback type
 
   napi_status status;
 
   if (is_js_thread && !isElectron) {
-    // Direct call on JS thread
+    // Direct call on JS thread (Node/Bun, NOT Electron)
     data->completionMutex = nullptr;
     data->completionCv = nullptr;
     data->isComplete = nullptr;
@@ -357,6 +168,7 @@ static void SubclassForwardInvocation(id self, SEL _cmd,
       std::lock_guard<std::mutex> lock(g_subclasses_mutex);
       auto it = g_subclasses.find(clsPtr);
       if (it == g_subclasses.end()) {
+        NOBJC_WARN("Subclass implementation not found for class %p (JS thread path)", cls);
         [invocation release];
         delete data;
         return;
@@ -364,6 +176,8 @@ static void SubclassForwardInvocation(id self, SEL _cmd,
 
       auto methodIt = it->second.methods.find(selectorName);
       if (methodIt == it->second.methods.end()) {
+        NOBJC_WARN("Method not found for selector %s (JS thread path)", 
+                   selectorName.c_str());
         [invocation release];
         delete data;
         return;
@@ -376,14 +190,39 @@ static void SubclassForwardInvocation(id self, SEL _cmd,
     try {
       Napi::Env callEnv(stored_env);
       Napi::HandleScope scope(callEnv);
-      CallSubclassJSCallback(callEnv, jsFn, data);
+      CallJSCallback(callEnv, jsFn, data);  // Use unified CallJSCallback
+      // CallJSCallback releases invocation and deletes data.
     } catch (const std::exception &e) {
-      NSLog(@"Error in direct call: %s", e.what());
+      NOBJC_ERROR("Error calling JS callback directly (likely invalid env in Electron): %s", 
+                  e.what());
+      NOBJC_LOG("Falling back to ThreadSafeFunction for selector %s", 
+                selectorName.c_str());
+      
+      // Fallback to TSFN if direct call fails
+      {
+        std::lock_guard<std::mutex> lock(g_subclasses_mutex);
+        auto it = g_subclasses.find(clsPtr);
+        if (it != g_subclasses.end()) {
+          auto methodIt = it->second.methods.find(selectorName);
+          if (methodIt != it->second.methods.end()) {
+            tsfn = methodIt->second.callback;
+            napi_status acq_status = tsfn.Acquire();
+            if (acq_status == napi_ok) {
+              // Use helper function for fallback
+              if (FallbackToTSFN(tsfn, data, selectorName)) {
+                return; // Data cleaned up in callback
+              }
+            }
+          }
+        }
+      }
+      
+      // If fallback also failed, clean up manually
       [invocation release];
       delete data;
     }
   } else {
-    // Cross-thread call via TSFN
+    // Cross-thread call via TSFN or Electron (always use TSFN)
     std::mutex completionMutex;
     std::condition_variable completionCv;
     bool isComplete = false;
@@ -392,12 +231,12 @@ static void SubclassForwardInvocation(id self, SEL _cmd,
     data->completionCv = &completionCv;
     data->isComplete = &isComplete;
 
-    status = tsfn.NonBlockingCall(data, CallSubclassJSCallback);
+    status = tsfn.NonBlockingCall(data, CallJSCallback);  // Use unified CallJSCallback
     tsfn.Release();
 
     if (status != napi_ok) {
-      NSLog(@"Error: Failed to call ThreadSafeFunction for selector %s",
-            selectorName.c_str());
+      NOBJC_ERROR("Failed to call ThreadSafeFunction for selector %s (status: %d)",
+            selectorName.c_str(), status);
       [invocation release];
       delete data;
       return;
@@ -500,7 +339,8 @@ Napi::Value DefineClass(const Napi::CallbackInfo &info) {
   } catch (...) {
   }
   
-  NSLog(@"[DefineClass] Detected runtime: isElectron=%d, isBun=%d", isElectron, isBun);
+  NOBJC_LOG("DefineClass: Detected runtime - isElectron=%d, isBun=%d", 
+            isElectron, isBun);
 
   // Allocate the new class
   Class newClass = objc_allocateClassPair(superClass, className.c_str(), 0);
@@ -531,7 +371,7 @@ Napi::Value DefineClass(const Napi::CallbackInfo &info) {
         if (proto != nullptr) {
           class_addProtocol(newClass, proto);
         } else {
-          NSLog(@"Warning: Protocol %s not found", protoName.c_str());
+          NOBJC_WARN("Protocol %s not found", protoName.c_str());
         }
       }
     }
@@ -551,7 +391,7 @@ Napi::Value DefineClass(const Napi::CallbackInfo &info) {
       Napi::Value methodDef = methods.Get(key);
 
       if (!methodDef.IsObject()) {
-        NSLog(@"Warning: Method definition for %s is not an object",
+        NOBJC_WARN("Method definition for %s is not an object",
               selectorName.c_str());
         continue;
       }
@@ -560,7 +400,7 @@ Napi::Value DefineClass(const Napi::CallbackInfo &info) {
 
       // Get type encoding
       if (!methodObj.Has("types") || !methodObj.Get("types").IsString()) {
-        NSLog(@"Warning: Method %s missing 'types' string", selectorName.c_str());
+        NOBJC_WARN("Method %s missing 'types' string", selectorName.c_str());
         continue;
       }
       std::string typeEncoding =
@@ -569,7 +409,7 @@ Napi::Value DefineClass(const Napi::CallbackInfo &info) {
       // Get implementation function
       if (!methodObj.Has("implementation") ||
           !methodObj.Get("implementation").IsFunction()) {
-        NSLog(@"Warning: Method %s missing 'implementation' function",
+        NOBJC_WARN("Method %s missing 'implementation' function",
               selectorName.c_str());
         continue;
       }
