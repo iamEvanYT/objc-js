@@ -85,6 +85,8 @@ static NSMethodSignature *SubclassMethodSignatureForSelector(id self, SEL _cmd,
 
 static void SubclassForwardInvocation(id self, SEL _cmd,
                                        NSInvocation *invocation) {
+  NOBJC_LOG("SubclassForwardInvocation: ENTER");
+  
   if (!invocation) {
     NOBJC_ERROR("SubclassForwardInvocation called with nil invocation");
     return;
@@ -102,8 +104,12 @@ static void SubclassForwardInvocation(id self, SEL _cmd,
   }
 
   std::string selectorName = [selectorString UTF8String];
+  NOBJC_LOG("SubclassForwardInvocation: selector = %s", selectorName.c_str());
+  
   Class cls = object_getClass(self);
   void *clsPtr = (__bridge void *)cls;
+  NOBJC_LOG("SubclassForwardInvocation: class = %s, clsPtr = %p", 
+            class_getName(cls), clsPtr);
 
   Napi::ThreadSafeFunction tsfn;
   std::string typeEncoding;
@@ -112,7 +118,9 @@ static void SubclassForwardInvocation(id self, SEL _cmd,
   void *superClassPtr = nullptr;
 
   {
+    NOBJC_LOG("SubclassForwardInvocation: Acquiring lock on g_subclasses_mutex");
     std::lock_guard<std::mutex> lock(g_subclasses_mutex);
+    NOBJC_LOG("SubclassForwardInvocation: Lock acquired, searching for class %p", clsPtr);
     auto it = g_subclasses.find(clsPtr);
     if (it == g_subclasses.end()) {
       NOBJC_WARN("Subclass implementation not found for class %p", cls);
@@ -127,6 +135,7 @@ static void SubclassForwardInvocation(id self, SEL _cmd,
       return;
     }
 
+    NOBJC_LOG("SubclassForwardInvocation: Found method, acquiring TSFN");
     tsfn = methodIt->second.callback;
     napi_status acq_status = tsfn.Acquire();
     if (acq_status != napi_ok) {
@@ -140,9 +149,12 @@ static void SubclassForwardInvocation(id self, SEL _cmd,
     js_thread = it->second.js_thread;
     isElectron = it->second.isElectron;
     superClassPtr = it->second.superClass;
+    NOBJC_LOG("SubclassForwardInvocation: TSFN acquired, isElectron=%d", isElectron);
   }
 
   bool is_js_thread = pthread_equal(pthread_self(), js_thread);
+  NOBJC_LOG("SubclassForwardInvocation: is_js_thread=%d, js_thread=%p, current_thread=%p",
+            is_js_thread, (void*)js_thread, (void*)pthread_self());
 
   auto data = new InvocationData();
   data->invocation = invocation;
@@ -151,20 +163,24 @@ static void SubclassForwardInvocation(id self, SEL _cmd,
   data->instancePtr = (__bridge void *)self;
   data->superClassPtr = superClassPtr;
   data->callbackType = CallbackType::Subclass;  // Set callback type
+  NOBJC_LOG("SubclassForwardInvocation: Created InvocationData");
 
   napi_status status;
 
   if (is_js_thread && !isElectron) {
+    NOBJC_LOG("SubclassForwardInvocation: Taking JS thread direct call path");
     // Direct call on JS thread (Node/Bun, NOT Electron)
     data->completionMutex = nullptr;
     data->completionCv = nullptr;
     data->isComplete = nullptr;
 
     tsfn.Release();
+    NOBJC_LOG("SubclassForwardInvocation: TSFN released, getting JS callback");
 
     Napi::Function jsFn;
     napi_env stored_env;
     {
+      NOBJC_LOG("SubclassForwardInvocation: Acquiring lock to get JS callback");
       std::lock_guard<std::mutex> lock(g_subclasses_mutex);
       auto it = g_subclasses.find(clsPtr);
       if (it == g_subclasses.end()) {
@@ -185,12 +201,15 @@ static void SubclassForwardInvocation(id self, SEL _cmd,
 
       stored_env = it->second.env;
       jsFn = methodIt->second.jsCallback.Value();
+      NOBJC_LOG("SubclassForwardInvocation: Got JS callback");
     }
 
     try {
+      NOBJC_LOG("SubclassForwardInvocation: Creating Napi::Env and calling JS callback");
       Napi::Env callEnv(stored_env);
       Napi::HandleScope scope(callEnv);
       CallJSCallback(callEnv, jsFn, data);  // Use unified CallJSCallback
+      NOBJC_LOG("SubclassForwardInvocation: JS callback completed");
       // CallJSCallback releases invocation and deletes data.
     } catch (const std::exception &e) {
       NOBJC_ERROR("Error calling JS callback directly (likely invalid env in Electron): %s", 
@@ -200,6 +219,7 @@ static void SubclassForwardInvocation(id self, SEL _cmd,
       
       // Fallback to TSFN if direct call fails
       {
+        NOBJC_LOG("SubclassForwardInvocation: Acquiring lock for fallback");
         std::lock_guard<std::mutex> lock(g_subclasses_mutex);
         auto it = g_subclasses.find(clsPtr);
         if (it != g_subclasses.end()) {
@@ -208,10 +228,13 @@ static void SubclassForwardInvocation(id self, SEL _cmd,
             tsfn = methodIt->second.callback;
             napi_status acq_status = tsfn.Acquire();
             if (acq_status == napi_ok) {
+              NOBJC_LOG("SubclassForwardInvocation: Fallback to TSFN");
               // Use helper function for fallback
               if (FallbackToTSFN(tsfn, data, selectorName)) {
+                NOBJC_LOG("SubclassForwardInvocation: Fallback succeeded");
                 return; // Data cleaned up in callback
               }
+              NOBJC_ERROR("SubclassForwardInvocation: Fallback failed");
             }
           }
         }
@@ -222,6 +245,7 @@ static void SubclassForwardInvocation(id self, SEL _cmd,
       delete data;
     }
   } else {
+    NOBJC_LOG("SubclassForwardInvocation: Taking cross-thread TSFN path");
     // Cross-thread call via TSFN or Electron (always use TSFN)
     std::mutex completionMutex;
     std::condition_variable completionCv;
@@ -231,8 +255,10 @@ static void SubclassForwardInvocation(id self, SEL _cmd,
     data->completionCv = &completionCv;
     data->isComplete = &isComplete;
 
+    NOBJC_LOG("SubclassForwardInvocation: Calling TSFN.NonBlockingCall");
     status = tsfn.NonBlockingCall(data, CallJSCallback);  // Use unified CallJSCallback
     tsfn.Release();
+    NOBJC_LOG("SubclassForwardInvocation: TSFN.NonBlockingCall returned status=%d", status);
 
     if (status != napi_ok) {
       NOBJC_ERROR("Failed to call ThreadSafeFunction for selector %s (status: %d)",
@@ -243,16 +269,24 @@ static void SubclassForwardInvocation(id self, SEL _cmd,
     }
 
     // Wait for callback via runloop pumping
+    NOBJC_LOG("SubclassForwardInvocation: Waiting for callback completion via runloop");
     CFTimeInterval timeout = 0.001;
+    int iterations = 0;
     while (true) {
       {
         std::unique_lock<std::mutex> lock(completionMutex);
         if (isComplete) {
+          NOBJC_LOG("SubclassForwardInvocation: Callback completed after %d iterations", iterations);
           break;
         }
       }
+      iterations++;
+      if (iterations % 1000 == 0) {
+        NOBJC_LOG("SubclassForwardInvocation: Still waiting... (%d iterations)", iterations);
+      }
       CFRunLoopRunInMode(kCFRunLoopDefaultMode, timeout, true);
     }
+    NOBJC_LOG("SubclassForwardInvocation: EXIT");
   }
 }
 
@@ -357,7 +391,7 @@ Napi::Value DefineClass(const Napi::CallbackInfo &info) {
       .methods = {},
       .env = env,
       .js_thread = pthread_self(),
-      .isElectron = isElectron || isBun,  // Treat Bun like Electron - always use TSFN
+      .isElectron = isElectron,  // Only Electron needs TSFN always; Bun works with direct calls
   };
 
   // Add protocol conformance

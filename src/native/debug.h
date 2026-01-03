@@ -11,7 +11,7 @@
 
 // Conditional logging macro - only logs when NOBJC_DEBUG is 1
 #if NOBJC_DEBUG
-  #define NOBJC_LOG(fmt, ...) NSLog(fmt, ##__VA_ARGS__)
+  #define NOBJC_LOG(fmt, ...) NSLog(@"" fmt, ##__VA_ARGS__)
 #else
   #define NOBJC_LOG(fmt, ...) do { } while(0)
 #endif

@@ -93,24 +93,16 @@ const MyAuthController = NobjcClass.define({
     "_requestContextWithRequests:error:": {
       types: "@@:@^@",
       implementation: (self, requests, errorOut) => {
-        console.log("[MyAuthController] ========================================");
         console.log("[MyAuthController] _requestContextWithRequests:error: called");
-        console.log("[MyAuthController] self:", self);
-        console.log("[MyAuthController] requests:", requests);
-        console.log("[MyAuthController] errorOut:", errorOut);
 
         // Call super to get the default context
-        console.log("[MyAuthController] Calling super...");
         const context = NobjcClass.super(self, "_requestContextWithRequests:error:", requests, errorOut);
-        console.log("[MyAuthController] Super returned context:", context);
 
         if (context) {
           // Get the clientDataHash we stored for this controller
           const controllerPtr = getPointer(self).readBigUInt64LE(0);
-          console.log("[MyAuthController] Controller pointer:", controllerPtr);
 
           const hashData = controllerDataHashMap.get(controllerPtr);
-          console.log("[MyAuthController] Hash data:", hashData);
 
           if (hashData) {
             console.log("[MyAuthController] Setting custom clientDataHash on context");
@@ -125,15 +117,11 @@ const MyAuthController = NobjcClass.define({
           }
         }
 
-        console.log("[MyAuthController] Returning context:", context);
-        console.log("[MyAuthController] ========================================");
         return context;
       }
     }
   }
 });
-
-console.log("[DefineClass] MyAuthController class defined:", MyAuthController);
 
 /**
  * Helper to set the clientDataHash for a controller before calling performRequests.
@@ -341,28 +329,22 @@ export async function performPasskeyAssertion(
 ): Promise<PasskeyAssertionResult> {
   return new Promise((resolve, reject) => {
     try {
-      console.log("[performPasskeyAssertion] ========================================");
       console.log("[performPasskeyAssertion] Starting with rpId:", rpId);
 
       // Create the credential provider
       const ASAuthorizationPlatformPublicKeyCredentialProvider = (AuthServices as any)
         .ASAuthorizationPlatformPublicKeyCredentialProvider;
 
-      console.log("[performPasskeyAssertion] Creating provider...");
       const rpIdString = NSString.stringWithUTF8String$(rpId);
       const provider =
         ASAuthorizationPlatformPublicKeyCredentialProvider.alloc().initWithRelyingPartyIdentifier$(rpIdString);
-      console.log("[performPasskeyAssertion] Provider created:", provider);
 
       // Create the assertion request
-      console.log("[performPasskeyAssertion] Creating request...");
       const challengeData = uint8ArrayToNSData(challenge);
       const request = provider.createCredentialAssertionRequestWithChallenge$(challengeData);
-      console.log("[performPasskeyAssertion] Request created:", request);
 
       // Set allowed credentials if provided
       if (allowedCredentials && allowedCredentials.length > 0) {
-        console.log("[performPasskeyAssertion] Setting allowed credentials...");
         const descriptors = NSMutableArray.array();
         for (const credId of allowedCredentials) {
           const credIdData = uint8ArrayToNSData(credId);
@@ -372,37 +354,27 @@ export async function performPasskeyAssertion(
           descriptors.addObject$(descriptor);
         }
         (request as any).setAllowedCredentials$(descriptors);
-        console.log("[performPasskeyAssertion] Allowed credentials set");
       }
 
       // Create the controller using our custom subclass
       console.log("[performPasskeyAssertion] Creating controller with MyAuthController...");
       const requests = NSArray.arrayWithObject$(request);
-      console.log("[performPasskeyAssertion] Requests array:", requests);
 
       const controller = MyAuthController.alloc().initWithAuthorizationRequests$(requests);
       console.log("[performPasskeyAssertion] Controller created:", controller);
-      console.log("[performPasskeyAssertion] Controller class:", (controller as any).class());
 
       // Set the custom clientDataHash
-      console.log("[performPasskeyAssertion] Setting clientDataHash...");
       const hashData = uint8ArrayToNSData(clientDataHash);
       setClientDataHashForController(controller, hashData);
-      console.log("[performPasskeyAssertion] clientDataHash set");
 
       // Create delegate and presentation provider
-      console.log("[performPasskeyAssertion] Creating delegate...");
       const delegate = createDelegate();
-      console.log("[performPasskeyAssertion] Delegate created:", delegate);
 
-      console.log("[performPasskeyAssertion] Creating presentation provider...");
       const presentationProvider = createPresentationProvider();
-      console.log("[performPasskeyAssertion] Presentation provider created:", presentationProvider);
 
       // Register inflight operation BEFORE setting delegate
       // to ensure we don't miss any callbacks
       const controllerPtr = getPointer(controller).readBigUInt64LE(0);
-      console.log("[performPasskeyAssertion] Controller pointer:", controllerPtr);
 
       inflightOperations.set(controllerPtr, {
         controller,
@@ -412,19 +384,13 @@ export async function performPasskeyAssertion(
         resolve,
         reject
       });
-      console.log("[performPasskeyAssertion] Inflight operation registered");
 
       // Set delegate and presentation provider
-      console.log("[performPasskeyAssertion] Setting delegate on controller...");
       (controller as any).setDelegate$(delegate);
-      console.log("[performPasskeyAssertion] Delegate set");
 
-      console.log("[performPasskeyAssertion] Setting presentation provider on controller...");
       (controller as any).setPresentationContextProvider$(presentationProvider);
-      console.log("[performPasskeyAssertion] Presentation provider set");
 
       console.log("[performPasskeyAssertion] Calling performRequests...");
-      console.log("[performPasskeyAssertion] ========================================");
 
       // Perform the authorization request
       (controller as any).performRequests();
