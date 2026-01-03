@@ -484,8 +484,9 @@ Napi::Value DefineClass(const Napi::CallbackInfo &info) {
         env, "'superclass' must be a string or ObjcObject representing a Class");
   }
 
-  // Detect Electron
+  // Detect Electron or Bun
   bool isElectron = false;
+  bool isBun = false;
   try {
     Napi::Object global = env.Global();
     if (global.Has("process")) {
@@ -493,10 +494,13 @@ Napi::Value DefineClass(const Napi::CallbackInfo &info) {
       if (process.Has("versions")) {
         Napi::Object versions = process.Get("versions").As<Napi::Object>();
         isElectron = versions.Has("electron");
+        isBun = versions.Has("bun");
       }
     }
   } catch (...) {
   }
+  
+  NSLog(@"[DefineClass] Detected runtime: isElectron=%d, isBun=%d", isElectron, isBun);
 
   // Allocate the new class
   Class newClass = objc_allocateClassPair(superClass, className.c_str(), 0);
@@ -513,7 +517,7 @@ Napi::Value DefineClass(const Napi::CallbackInfo &info) {
       .methods = {},
       .env = env,
       .js_thread = pthread_self(),
-      .isElectron = isElectron,
+      .isElectron = isElectron || isBun,  // Treat Bun like Electron - always use TSFN
   };
 
   // Add protocol conformance
