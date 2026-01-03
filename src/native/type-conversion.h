@@ -479,8 +479,8 @@ inline void SetInvocationReturnFromJS(NSInvocation *invocation,
       Napi::Object resultObj = result.As<Napi::Object>();
       if (resultObj.InstanceOf(ObjcObject::constructor.Value())) {
         ObjcObject *objcObj = Napi::ObjectWrap<ObjcObject>::Unwrap(resultObj);
-        NSLog(@"ObjcObject: %@", objcObj->objcObject);
         id objcValue = objcObj->objcObject;
+        NSLog(@"ObjcObject: %@", objcValue);
         [invocation setReturnValue:&objcValue];
       } else {
         NSLog(@"Warning: result object is not an ObjcObject instance");

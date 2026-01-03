@@ -202,4 +202,18 @@ describe("Protocol Implementation Tests", () => {
     expect(receivedArg).not.toBeNull();
     // The callback was successfully invoked! This proves protocol callbacks work.
   });
+
+  test("should return object values from protocol callbacks", () => {
+    const expected = NSString.stringWithUTF8String$("ReturnValue");
+
+    const delegate = NobjcProtocol.implement("NSCopying", {
+      "copyWithZone:": (_zone: any) => {
+        return expected;
+      }
+    });
+
+    const result = (delegate as any).copyWithZone$(null);
+    expect(result).not.toBeNull();
+    expect(result.toString()).toBe("ReturnValue");
+  });
 });

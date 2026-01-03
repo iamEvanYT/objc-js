@@ -57,17 +57,27 @@ void CallJSCallback(Napi::Env env, Napi::Function jsCallback,
     jsArgs.push_back(ExtractInvocationArgumentToJS(env, invocation, i, argType[0]));
   }
 
+  NSLog(@"[DEBUG] About to call JS callback for %s with %zu arguments",
+        data->selectorName.c_str(), jsArgs.size());
+
   // Call the JavaScript callback
   try {
     Napi::Value result = jsCallback.Call(jsArgs);
+
+    NSLog(@"[DEBUG] JS callback for %s returned, result type: %d",
+          data->selectorName.c_str(), result.Type());
 
     // Handle return value if the method expects one
     const char *returnType = [sig methodReturnType];
     SimplifiedTypeEncoding retType(returnType);
 
     if (retType[0] != 'v') { // Not void
+      NSLog(@"[DEBUG] Setting return value for %s, return type: %c, JS result is %s",
+            data->selectorName.c_str(), retType[0],
+            result.IsNull() ? "null" : result.IsUndefined() ? "undefined" : "value");
       SetInvocationReturnFromJS(invocation, result, retType[0],
                                 data->selectorName.c_str());
+      NSLog(@"[DEBUG] Return value set for %s", data->selectorName.c_str());
     }
   } catch (const Napi::Error &e) {
     NSLog(@"Error calling JavaScript callback for %s: %s",
@@ -163,6 +173,7 @@ void ForwardInvocation(id self, SEL _cmd, NSInvocation *invocation) {
   Napi::ThreadSafeFunction tsfn;
   std::string typeEncoding;
   pthread_t js_thread;
+  bool isElectron;
   {
     std::lock_guard<std::mutex> lock(g_implementations_mutex);
     auto it = g_implementations.find(ptr);
@@ -199,14 +210,19 @@ void ForwardInvocation(id self, SEL _cmd, NSInvocation *invocation) {
 
     // Get the JS thread ID to check if we're on the same thread
     js_thread = it->second.js_thread;
+    isElectron = it->second.isElectron;
   }
 
   // Check if we're on the JS thread
   bool is_js_thread = pthread_equal(pthread_self(), js_thread);
 
-  // IMPORTANT: We ALWAYS use ThreadSafeFunction to call into JS, even when on
-  // the JS thread. This ensures proper N-API context and avoids issues with V8
-  // HandleScope management.
+  NSLog(@"[DEBUG] ForwardInvocation for %s: is_js_thread=%d, isElectron=%d, current_thread=%p, js_thread=%p",
+        selectorName.c_str(), is_js_thread, isElectron, pthread_self(), js_thread);
+
+  // IMPORTANT: We call directly on the JS thread so return values are set
+  // synchronously; otherwise we use a ThreadSafeFunction to marshal work.
+  // EXCEPTION: In Electron, we ALWAYS use TSFN even on the JS thread because
+  // Electron's V8 context isn't properly set up for direct handle creation.
 
   // Create invocation data
   auto data = new InvocationData();
@@ -216,30 +232,118 @@ void ForwardInvocation(id self, SEL _cmd, NSInvocation *invocation) {
 
   napi_status status;
 
-  if (is_js_thread) {
-    // We're on the JS thread (e.g., called from performSelector in Bun/Node)
-    // Use BlockingCall which works correctly here - it will execute immediately
-    // since we're already on the event loop thread
+  if (is_js_thread && !isElectron) {
+    // We're on the JS thread in Node/Bun (NOT Electron)
+    // Call directly to ensure return values are set synchronously.
+    NSLog(@"[DEBUG] Taking JS thread direct call path for %s", selectorName.c_str());
     data->completionMutex = nullptr;
     data->completionCv = nullptr;
     data->isComplete = nullptr;
 
-    status = tsfn.BlockingCall(data, CallJSCallback);
     tsfn.Release();
 
-    if (status != napi_ok) {
-      NSLog(@"Error: Failed to call ThreadSafeFunction for selector %s "
-            @"(status: %d)",
-            selectorName.c_str(), status);
+    Napi::Function jsFn;
+    napi_env stored_env;
+    {
+      std::lock_guard<std::mutex> lock(g_implementations_mutex);
+      auto it = g_implementations.find(ptr);
+      if (it == g_implementations.end()) {
+        NSLog(@"Warning: Protocol implementation not found for instance %p "
+              @"(JS thread path)",
+              self);
+        [invocation release];
+        delete data;
+        return;
+      }
+
+      auto jsCallbackIt = it->second.jsCallbacks.find(selectorName);
+      if (jsCallbackIt == it->second.jsCallbacks.end()) {
+        NSLog(@"Warning: JS callback not found for selector %s "
+              @"(JS thread path)",
+              selectorName.c_str());
+        [invocation release];
+        delete data;
+        return;
+      }
+
+      stored_env = it->second.env;
+      jsFn = jsCallbackIt->second.Value();
+    }
+
+    // Safely call the JS callback with proper V8 context setup
+    // Wrap in try-catch to handle invalid env (e.g., in Electron when context
+    // is destroyed)
+    try {
+      NSLog(@"[DEBUG] Creating Napi::Env from stored_env for %s", selectorName.c_str());
+      Napi::Env callEnv(stored_env);
+      
+      // Create a HandleScope to properly manage V8 handles
+      // This is critical for Electron which may have multiple V8 contexts
+      NSLog(@"[DEBUG] Creating HandleScope for %s", selectorName.c_str());
+      Napi::HandleScope scope(callEnv);
+      
+      NSLog(@"[DEBUG] Calling CallJSCallback directly for %s", selectorName.c_str());
+      CallJSCallback(callEnv, jsFn, data);
+      NSLog(@"[DEBUG] CallJSCallback completed for %s", selectorName.c_str());
+      // CallJSCallback releases invocation and deletes data.
+    } catch (const std::exception &e) {
+      NSLog(@"Error calling JS callback directly (likely invalid env in "
+            @"Electron): %s",
+            e.what());
+      NSLog(@"Falling back to ThreadSafeFunction for selector %s",
+            selectorName.c_str());
+      
+      // Fallback to TSFN if direct call fails (e.g., invalid env in Electron)
+      // We need to re-acquire the TSFN and set up sync primitives
+      {
+        std::lock_guard<std::mutex> lock(g_implementations_mutex);
+        auto it = g_implementations.find(ptr);
+        if (it != g_implementations.end()) {
+          auto callbackIt = it->second.callbacks.find(selectorName);
+          if (callbackIt != it->second.callbacks.end()) {
+            tsfn = callbackIt->second;
+            napi_status acq_status = tsfn.Acquire();
+            if (acq_status == napi_ok) {
+              // Set up synchronization for fallback path
+              std::mutex completionMutex;
+              std::condition_variable completionCv;
+              bool isComplete = false;
+
+              data->completionMutex = &completionMutex;
+              data->completionCv = &completionCv;
+              data->isComplete = &isComplete;
+
+              status = tsfn.NonBlockingCall(data, CallJSCallback);
+              tsfn.Release();
+
+              if (status == napi_ok) {
+                // Wait for callback by pumping CFRunLoop
+                CFTimeInterval timeout = 0.001; // 1ms per iteration
+                while (true) {
+                  {
+                    std::unique_lock<std::mutex> lock(completionMutex);
+                    if (isComplete) {
+                      break;
+                    }
+                  }
+                  CFRunLoopRunInMode(kCFRunLoopDefaultMode, timeout, true);
+                }
+                return; // Data cleaned up in callback
+              }
+            }
+          }
+        }
+      }
+      
+      // If fallback also failed, clean up manually
       [invocation release];
       delete data;
-      return;
     }
-    // BlockingCall completed, data cleaned up in callback
   } else {
     // We're on a different thread (e.g., Cocoa callback from
     // ASAuthorizationController) Use NonBlockingCall + runloop pumping to avoid
     // deadlocks
+    NSLog(@"[DEBUG] Taking non-JS thread path for %s", selectorName.c_str());
     std::mutex completionMutex;
     std::condition_variable completionCv;
     bool isComplete = false;
@@ -310,4 +414,3 @@ void DeallocImplementation(id self, SEL _cmd) {
   // Note: Under ARC, we don't need to manually call [super dealloc]
   // The runtime handles this automatically
 }
-

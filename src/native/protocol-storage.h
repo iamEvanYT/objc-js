@@ -43,6 +43,8 @@ struct ProtocolImplementation {
   napi_env env;
   // Store the JS thread ID for thread detection
   pthread_t js_thread;
+  // Flag to indicate if running in Electron (requires TSFN path always)
+  bool isElectron;
 };
 
 // MARK: - Global Storage
