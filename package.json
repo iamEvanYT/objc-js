@@ -39,7 +39,7 @@
     "format": "prettier --write \"**/*.{ts,js,json,md}\"",
     "preinstall-disabled": "npm run build-scripts && npm run make-clangd-config"
   },
-  "version": "0.0.12",
+  "version": "0.0.13",
   "description": "Objective-C bridge for Node.js",
   "main": "dist/index.js",
   "dependencies": {
