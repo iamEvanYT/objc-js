@@ -1,13 +1,7 @@
 #ifndef DEBUG_H
 #define DEBUG_H
 
-#include <Foundation/Foundation.h>
-
-// Debug logging control
-// Set to 1 to enable verbose logging, 0 to disable
-#ifndef NOBJC_DEBUG
-  #define NOBJC_DEBUG 1
-#endif
+#define NOBJC_DEBUG 1
 
 // Conditional logging macro - only logs when NOBJC_DEBUG is 1
 #if NOBJC_DEBUG

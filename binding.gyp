@@ -14,10 +14,14 @@
                 "NAPI_VERSION=6"
             ],
             "include_dirs": [
-                "<!@(node -p \"require('node-addon-api').include\")"
+                "<!@(node -p \"require('node-addon-api').include\")",
+                "<!@(pkg-config --cflags-only-I libffi | sed 's/-I//g')"
             ],
             "dependencies": [
                 "<!(node -p \"require('node-addon-api').gyp\")"
+            ],
+            "libraries": [
+                "-lffi"
             ],
             "xcode_settings": {
                 "MACOSX_DEPLOYMENT_TARGET": "13.3",
