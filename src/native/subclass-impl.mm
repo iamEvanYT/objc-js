@@ -338,9 +338,9 @@ Napi::Value DefineClass(const Napi::CallbackInfo &info) {
         env, "'superclass' must be a string or ObjcObject representing a Class");
   }
 
-  // Detect Electron or Bun
+  // Detect Electron (bun is commented out as it's not needed)
   bool isElectron = false;
-  bool isBun = false;
+  // bool isBun = false;
   try {
     Napi::Object global = env.Global();
     if (global.Has("process")) {
@@ -348,7 +348,7 @@ Napi::Value DefineClass(const Napi::CallbackInfo &info) {
       if (process.Has("versions")) {
         Napi::Object versions = process.Get("versions").As<Napi::Object>();
         isElectron = versions.Has("electron");
-        isBun = versions.Has("bun");
+        // isBun = versions.Has("bun");
       }
     }
   } catch (...) {

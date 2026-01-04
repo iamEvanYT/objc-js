@@ -477,14 +477,103 @@ describe("DefineClass / Subclassing Tests", () => {
     expect(result.toString()).toBe("Second");
   });
 
-  test.skip("should call super with NSError** out-parameter", () => {
-    // TODO: This test is skipped because calling methods with ^@ (NSError**) parameters
-    // from JavaScript requires buffer/pointer support that isn't fully implemented yet.
-    // The super call mechanism itself handles ^@ correctly (see CallSuperWithFFI code),
-    // but the JS->Native bridge doesn't support passing pointers from JS.
-    // This signature (@@:@^@) is used by ASAuthorizationController's
-    // _requestContextWithRequests:error: method, and super calls with this signature
-    // work correctly when called from native code.
+  test("should define method with NSError** out-parameter", () => {
+    // Test that we can define a method with ^@ (NSError**) signature
+    let methodCalled = false;
+    let receivedErrorPtr: any = null;
+
+    const MyClass = NobjcClass.define({
+      name: "TestErrorOutParam",
+      superclass: "NSObject",
+      methods: {
+        "testMethodWithError:": {
+          types: "@@:^@", // returns id, takes NSError**
+          implementation: (self, errorPtr) => {
+            methodCalled = true;
+            receivedErrorPtr = errorPtr;
+            // Return a success result
+            return NSString.stringWithUTF8String$("success");
+          }
+        }
+      }
+    });
+
+    const instance = (MyClass as any).alloc().init();
+    const result = (instance as any).testMethodWithError$(null);
+
+    expect(methodCalled).toBe(true);
+    expect(receivedErrorPtr).toBeNull(); // JavaScript passes null
+    expect(result.toString()).toBe("success");
+  });
+
+  test("should call super with NSError** out-parameter", () => {
+    // Test super call with ^@ parameter using NSFileManager
+    // NSFileManager.contentsOfDirectoryAtPath:error: has signature @@:@^@
+    let superCalled = false;
+
+    const MyFileManager = NobjcClass.define({
+      name: "TestFileManagerSubclass",
+      superclass: "NSFileManager",
+      methods: {
+        "contentsOfDirectoryAtPath:error:": {
+          types: "@@:@^@", // Returns NSArray*, takes NSString* and NSError**
+          implementation: (self, path, errorPtr) => {
+            superCalled = true;
+
+            // Call super with the out-parameter
+            // Pass null from JavaScript - native code handles allocation
+            const result = NobjcClass.super(self, "contentsOfDirectoryAtPath:error:", path, null);
+
+            return result;
+          }
+        }
+      }
+    });
+
+    const manager = (MyFileManager as any).alloc().init();
+    const tmpPath = NSString.stringWithUTF8String$("/tmp");
+
+    // Call the method - should invoke our override which calls super
+    const contents = (manager as any).contentsOfDirectoryAtPath$error$(tmpPath, null);
+
+    expect(superCalled).toBe(true);
+    expect(contents).not.toBeNull(); // /tmp should exist and return an array
+
+    // Verify it's an NSArray with count
+    const count = (contents as any).count();
+    expect(typeof count).toBe("number");
+    expect(count).toBeGreaterThanOrEqual(0);
+  });
+
+  test("should handle multiple arguments including out-parameter", () => {
+    // Test a method with multiple regular arguments and an out-parameter
+    let capturedPath: string | null = null;
+
+    const MyFileManager = NobjcClass.define({
+      name: "TestFileManagerMultiArg",
+      superclass: "NSFileManager",
+      methods: {
+        "contentsOfDirectoryAtPath:error:": {
+          types: "@@:@^@",
+          implementation: (self, path, errorPtr) => {
+            capturedPath = path.toString();
+
+            // Call super to get actual directory contents
+            const result = NobjcClass.super(self, "contentsOfDirectoryAtPath:error:", path, null);
+
+            return result;
+          }
+        }
+      }
+    });
+
+    const manager = (MyFileManager as any).alloc().init();
+    const testPath = NSString.stringWithUTF8String$("/tmp");
+    const contents = (manager as any).contentsOfDirectoryAtPath$error$(testPath, null);
+
+    // @ts-expect-error - capturedPath would be string
+    expect(capturedPath).toBe("/tmp");
+    expect(contents).not.toBeNull();
   });
 
   test("should call super with three object arguments", () => {
