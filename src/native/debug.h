@@ -6,7 +6,7 @@
 // Debug logging control
 // Set to 1 to enable verbose logging, 0 to disable
 #ifndef NOBJC_DEBUG
-  #define NOBJC_DEBUG 0
+  #define NOBJC_DEBUG 1
 #endif
 
 // Conditional logging macro - only logs when NOBJC_DEBUG is 1

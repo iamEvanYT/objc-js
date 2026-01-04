@@ -14,9 +14,6 @@
 // Handles both protocol implementation and subclass method forwarding
 void CallJSCallback(Napi::Env env, Napi::Function jsCallback,
                     InvocationData *data) {
-  NOBJC_LOG("CallJSCallback: ENTER for selector %s", 
-            data ? data->selectorName.c_str() : "NULL");
-  
   if (!data) {
     NOBJC_ERROR("InvocationData is null in CallJSCallback");
     return;
@@ -42,7 +39,6 @@ void CallJSCallback(Napi::Env env, Napi::Function jsCallback,
     return;
   }
 
-  NOBJC_LOG("CallJSCallback: Getting method signature");
   // Extract arguments using NSInvocation
   NSMethodSignature *sig = [invocation methodSignature];
   if (!sig) {
@@ -54,14 +50,10 @@ void CallJSCallback(Napi::Env env, Napi::Function jsCallback,
     return;
   }
 
-  NOBJC_LOG("CallJSCallback: Building JS arguments (callbackType=%d)", 
-            (int)data->callbackType);
   std::vector<napi_value> jsArgs;
 
   // For subclass methods, include 'self' as first JavaScript argument
   if (data->callbackType == CallbackType::Subclass) {
-    NOBJC_LOG("CallJSCallback (Subclass): including self for selector %s",
-              data->selectorName.c_str());
     __unsafe_unretained id selfObj;
     [invocation getArgument:&selfObj atIndex:0];
     jsArgs.push_back(ObjcObject::NewInstance(env, selfObj));
@@ -84,21 +76,16 @@ void CallJSCallback(Napi::Env env, Napi::Function jsCallback,
 
   // Call the JavaScript callback
   try {
-    NOBJC_LOG("CallJSCallback: calling JS function for selector %s with %zu args",
-              data->selectorName.c_str(), jsArgs.size());
     Napi::Value result = jsCallback.Call(jsArgs);
-    NOBJC_LOG("CallJSCallback: JS function returned");
 
     // Handle return value if the method expects one
     const char *returnType = [sig methodReturnType];
     SimplifiedTypeEncoding retType(returnType);
 
     if (retType[0] != 'v') { // Not void
-      NOBJC_LOG("CallJSCallback: Setting return value (type=%c)", retType[0]);
       SetInvocationReturnFromJS(invocation, result, retType[0],
                                 data->selectorName.c_str());
     }
-    NOBJC_LOG("CallJSCallback: Return value set");
   } catch (const Napi::Error &e) {
     NOBJC_ERROR("Error calling JavaScript callback for %s: %s",
           data->selectorName.c_str(), e.what());
@@ -111,15 +98,12 @@ void CallJSCallback(Napi::Env env, Napi::Function jsCallback,
   }
 
   // Signal completion to the waiting ForwardInvocation
-  NOBJC_LOG("CallJSCallback: Signaling completion");
   SignalInvocationComplete(data);
 
   // Clean up the invocation data
   // Release the invocation that we retained in ForwardInvocation
-  NOBJC_LOG("CallJSCallback: Cleaning up");
   [invocation release];
   delete data;
-  NOBJC_LOG("CallJSCallback: EXIT");
 }
 
 // MARK: - Fallback Helper
@@ -128,9 +112,6 @@ void CallJSCallback(Napi::Env env, Napi::Function jsCallback,
 // This is used when direct JS callback invocation fails (e.g., in Electron)
 bool FallbackToTSFN(Napi::ThreadSafeFunction &tsfn, InvocationData *data,
                     const std::string &selectorName) {
-  NOBJC_LOG("FallbackToTSFN: Attempting fallback for selector %s", 
-            selectorName.c_str());
-  
   // Set up synchronization primitives
   std::mutex completionMutex;
   std::condition_variable completionCv;
@@ -162,8 +143,6 @@ bool FallbackToTSFN(Napi::ThreadSafeFunction &tsfn, InvocationData *data,
     CFRunLoopRunInMode(kCFRunLoopDefaultMode, timeout, true);
   }
   
-  NOBJC_LOG("FallbackToTSFN: Successfully completed for selector %s", 
-            selectorName.c_str());
   return true;
 }
 

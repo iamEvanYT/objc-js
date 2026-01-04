@@ -85,8 +85,6 @@ static NSMethodSignature *SubclassMethodSignatureForSelector(id self, SEL _cmd,
 
 static void SubclassForwardInvocation(id self, SEL _cmd,
                                        NSInvocation *invocation) {
-  NOBJC_LOG("SubclassForwardInvocation: ENTER");
-  
   if (!invocation) {
     NOBJC_ERROR("SubclassForwardInvocation called with nil invocation");
     return;
@@ -104,12 +102,9 @@ static void SubclassForwardInvocation(id self, SEL _cmd,
   }
 
   std::string selectorName = [selectorString UTF8String];
-  NOBJC_LOG("SubclassForwardInvocation: selector = %s", selectorName.c_str());
   
   Class cls = object_getClass(self);
   void *clsPtr = (__bridge void *)cls;
-  NOBJC_LOG("SubclassForwardInvocation: class = %s, clsPtr = %p", 
-            class_getName(cls), clsPtr);
 
   Napi::ThreadSafeFunction tsfn;
   std::string typeEncoding;
@@ -118,9 +113,7 @@ static void SubclassForwardInvocation(id self, SEL _cmd,
   void *superClassPtr = nullptr;
 
   {
-    NOBJC_LOG("SubclassForwardInvocation: Acquiring lock on g_subclasses_mutex");
     std::lock_guard<std::mutex> lock(g_subclasses_mutex);
-    NOBJC_LOG("SubclassForwardInvocation: Lock acquired, searching for class %p", clsPtr);
     auto it = g_subclasses.find(clsPtr);
     if (it == g_subclasses.end()) {
       NOBJC_WARN("Subclass implementation not found for class %p", cls);
@@ -135,7 +128,6 @@ static void SubclassForwardInvocation(id self, SEL _cmd,
       return;
     }
 
-    NOBJC_LOG("SubclassForwardInvocation: Found method, acquiring TSFN");
     tsfn = methodIt->second.callback;
     napi_status acq_status = tsfn.Acquire();
     if (acq_status != napi_ok) {
@@ -149,12 +141,9 @@ static void SubclassForwardInvocation(id self, SEL _cmd,
     js_thread = it->second.js_thread;
     isElectron = it->second.isElectron;
     superClassPtr = it->second.superClass;
-    NOBJC_LOG("SubclassForwardInvocation: TSFN acquired, isElectron=%d", isElectron);
   }
 
   bool is_js_thread = pthread_equal(pthread_self(), js_thread);
-  NOBJC_LOG("SubclassForwardInvocation: is_js_thread=%d, js_thread=%p, current_thread=%p",
-            is_js_thread, (void*)js_thread, (void*)pthread_self());
 
   auto data = new InvocationData();
   data->invocation = invocation;
@@ -163,24 +152,20 @@ static void SubclassForwardInvocation(id self, SEL _cmd,
   data->instancePtr = (__bridge void *)self;
   data->superClassPtr = superClassPtr;
   data->callbackType = CallbackType::Subclass;  // Set callback type
-  NOBJC_LOG("SubclassForwardInvocation: Created InvocationData");
 
   napi_status status;
 
   if (is_js_thread && !isElectron) {
-    NOBJC_LOG("SubclassForwardInvocation: Taking JS thread direct call path");
     // Direct call on JS thread (Node/Bun, NOT Electron)
     data->completionMutex = nullptr;
     data->completionCv = nullptr;
     data->isComplete = nullptr;
 
     tsfn.Release();
-    NOBJC_LOG("SubclassForwardInvocation: TSFN released, getting JS callback");
 
     Napi::Function jsFn;
     napi_env stored_env;
     {
-      NOBJC_LOG("SubclassForwardInvocation: Acquiring lock to get JS callback");
       std::lock_guard<std::mutex> lock(g_subclasses_mutex);
       auto it = g_subclasses.find(clsPtr);
       if (it == g_subclasses.end()) {
@@ -201,15 +186,12 @@ static void SubclassForwardInvocation(id self, SEL _cmd,
 
       stored_env = it->second.env;
       jsFn = methodIt->second.jsCallback.Value();
-      NOBJC_LOG("SubclassForwardInvocation: Got JS callback");
     }
 
     try {
-      NOBJC_LOG("SubclassForwardInvocation: Creating Napi::Env and calling JS callback");
       Napi::Env callEnv(stored_env);
       Napi::HandleScope scope(callEnv);
       CallJSCallback(callEnv, jsFn, data);  // Use unified CallJSCallback
-      NOBJC_LOG("SubclassForwardInvocation: JS callback completed");
       // CallJSCallback releases invocation and deletes data.
     } catch (const std::exception &e) {
       NOBJC_ERROR("Error calling JS callback directly (likely invalid env in Electron): %s", 
@@ -219,7 +201,6 @@ static void SubclassForwardInvocation(id self, SEL _cmd,
       
       // Fallback to TSFN if direct call fails
       {
-        NOBJC_LOG("SubclassForwardInvocation: Acquiring lock for fallback");
         std::lock_guard<std::mutex> lock(g_subclasses_mutex);
         auto it = g_subclasses.find(clsPtr);
         if (it != g_subclasses.end()) {
@@ -228,10 +209,8 @@ static void SubclassForwardInvocation(id self, SEL _cmd,
             tsfn = methodIt->second.callback;
             napi_status acq_status = tsfn.Acquire();
             if (acq_status == napi_ok) {
-              NOBJC_LOG("SubclassForwardInvocation: Fallback to TSFN");
               // Use helper function for fallback
               if (FallbackToTSFN(tsfn, data, selectorName)) {
-                NOBJC_LOG("SubclassForwardInvocation: Fallback succeeded");
                 return; // Data cleaned up in callback
               }
               NOBJC_ERROR("SubclassForwardInvocation: Fallback failed");
@@ -245,7 +224,6 @@ static void SubclassForwardInvocation(id self, SEL _cmd,
       delete data;
     }
   } else {
-    NOBJC_LOG("SubclassForwardInvocation: Taking cross-thread TSFN path");
     // Cross-thread call via TSFN or Electron (always use TSFN)
     std::mutex completionMutex;
     std::condition_variable completionCv;
@@ -255,10 +233,8 @@ static void SubclassForwardInvocation(id self, SEL _cmd,
     data->completionCv = &completionCv;
     data->isComplete = &isComplete;
 
-    NOBJC_LOG("SubclassForwardInvocation: Calling TSFN.NonBlockingCall");
     status = tsfn.NonBlockingCall(data, CallJSCallback);  // Use unified CallJSCallback
     tsfn.Release();
-    NOBJC_LOG("SubclassForwardInvocation: TSFN.NonBlockingCall returned status=%d", status);
 
     if (status != napi_ok) {
       NOBJC_ERROR("Failed to call ThreadSafeFunction for selector %s (status: %d)",
@@ -269,14 +245,12 @@ static void SubclassForwardInvocation(id self, SEL _cmd,
     }
 
     // Wait for callback via runloop pumping
-    NOBJC_LOG("SubclassForwardInvocation: Waiting for callback completion via runloop");
     CFTimeInterval timeout = 0.001;
     int iterations = 0;
     while (true) {
       {
         std::unique_lock<std::mutex> lock(completionMutex);
         if (isComplete) {
-          NOBJC_LOG("SubclassForwardInvocation: Callback completed after %d iterations", iterations);
           break;
         }
       }
@@ -286,7 +260,6 @@ static void SubclassForwardInvocation(id self, SEL _cmd,
       }
       CFRunLoopRunInMode(kCFRunLoopDefaultMode, timeout, true);
     }
-    NOBJC_LOG("SubclassForwardInvocation: EXIT");
   }
 }
 
@@ -372,9 +345,6 @@ Napi::Value DefineClass(const Napi::CallbackInfo &info) {
     }
   } catch (...) {
   }
-  
-  NOBJC_LOG("DefineClass: Detected runtime - isElectron=%d, isBun=%d", 
-            isElectron, isBun);
 
   // Allocate the new class
   Class newClass = objc_allocateClassPair(superClass, className.c_str(), 0);
@@ -526,10 +496,15 @@ Napi::Value CallSuper(const Napi::CallbackInfo &info) {
   }
   std::string selectorName = info[1].As<Napi::String>().Utf8Value();
   SEL selector = sel_registerName(selectorName.c_str());
+  
+  NOBJC_LOG("CallSuper: selector=%s, self=%p, argCount=%zu", 
+            selectorName.c_str(), self, info.Length() - 2);
 
   // Find the superclass
   Class instanceClass = object_getClass(self);
   Class superClass = nil;
+  
+  NOBJC_LOG("CallSuper: instanceClass=%s", class_getName(instanceClass));
 
   {
     std::lock_guard<std::mutex> lock(g_subclasses_mutex);
@@ -540,6 +515,8 @@ Napi::Value CallSuper(const Napi::CallbackInfo &info) {
       auto it = g_subclasses.find(clsPtr);
       if (it != g_subclasses.end()) {
         superClass = (__bridge Class)it->second.superClass;
+        NOBJC_LOG("CallSuper: Found superclass from registry: %s", 
+                  class_getName(superClass));
         break;
       }
       cls = class_getSuperclass(cls);
@@ -549,9 +526,12 @@ Napi::Value CallSuper(const Napi::CallbackInfo &info) {
   if (superClass == nil) {
     // Fall back to direct superclass
     superClass = class_getSuperclass(instanceClass);
+    NOBJC_LOG("CallSuper: Using direct superclass: %s", 
+              superClass ? class_getName(superClass) : "nil");
   }
 
   if (superClass == nil) {
+    NOBJC_ERROR("CallSuper: Could not determine superclass for super call");
     throw Napi::Error::New(env, "Could not determine superclass for super call");
   }
 
@@ -559,23 +539,37 @@ Napi::Value CallSuper(const Napi::CallbackInfo &info) {
   NSMethodSignature *methodSig =
       [superClass instanceMethodSignatureForSelector:selector];
   if (methodSig == nil) {
+    NOBJC_ERROR("CallSuper: Selector '%s' not found on superclass %s", 
+                selectorName.c_str(), class_getName(superClass));
     throw Napi::Error::New(
         env, "Selector '" + selectorName + "' not found on superclass");
   }
+  
+  NOBJC_LOG("CallSuper: Method signature: %s", [methodSig description].UTF8String);
 
   // Get the super method's IMP directly
   Method superMethod = class_getInstanceMethod(superClass, selector);
   if (superMethod == nil) {
+    NOBJC_ERROR("CallSuper: Could not get method implementation for selector '%s'", 
+                selectorName.c_str());
     throw Napi::Error::New(
         env, "Could not get method implementation for selector '" + selectorName +
                  "' from superclass");
   }
+  
+  NOBJC_LOG("CallSuper: Found method implementation at %p", 
+            method_getImplementation(superMethod));
 
   // Validate argument count
   const size_t expectedArgCount = [methodSig numberOfArguments] - 2;
   const size_t providedArgCount = info.Length() - 2;
+  
+  NOBJC_LOG("CallSuper: Expected %zu args, provided %zu args", 
+            expectedArgCount, providedArgCount);
 
   if (providedArgCount != expectedArgCount) {
+    NOBJC_ERROR("CallSuper: Argument count mismatch for selector '%s'", 
+                selectorName.c_str());
     throw Napi::Error::New(
         env, "Selector " + selectorName + " expected " +
                  std::to_string(expectedArgCount) + " argument(s), but got " +
@@ -603,23 +597,30 @@ Napi::Value CallSuper(const Napi::CallbackInfo &info) {
     size_t argIndex = i; // Argument index in invocation (0=self, 1=_cmd, 2+=args)
     const char *typeEncoding =
         SimplifyTypeEncoding([methodSig getArgumentTypeAtIndex:argIndex]);
+    
+    NOBJC_LOG("CallSuper: Processing argument %zu, type encoding: %s", 
+              i - 2, typeEncoding);
 
     // Handle ^@ (pointer to object) specially for out-params
     if (typeEncoding[0] == '^' && typeEncoding[1] == '@') {
+      NOBJC_LOG("CallSuper: Argument %zu is pointer-to-object (out-param)", i - 2);
       // For super calls with NSError**, we need to pass the pointer through
       if (info[i].IsObject()) {
         // Pass nullptr - the super call will set it if needed
         id *errorPtr = nullptr;
         [invocation setArgument:&errorPtr atIndex:argIndex];
+        NOBJC_LOG("CallSuper: Set out-param to nullptr");
         continue;
       }
     }
 
     auto arg = AsObjCArgument(info[i], typeEncoding, context);
     if (!arg.has_value()) {
+      NOBJC_ERROR("CallSuper: Failed to convert argument %zu", i - 2);
       throw Napi::TypeError::New(
           env, "Unsupported argument type for argument " + std::to_string(i - 2));
     }
+    NOBJC_LOG("CallSuper: Successfully converted argument %zu", i - 2);
     storedArgs.push_back(std::move(*arg));
     std::visit(
         [&](auto &&outer) {
@@ -632,6 +633,7 @@ Napi::Value CallSuper(const Napi::CallbackInfo &info) {
           }
         },
         storedArgs.back());
+    NOBJC_LOG("CallSuper: Set argument %zu on invocation", i - 2);
   }
 
   // Invoke the super's IMP directly using the invocation mechanism
@@ -648,6 +650,9 @@ Napi::Value CallSuper(const Napi::CallbackInfo &info) {
   struct objc_super superStruct;
   superStruct.receiver = self;
   superStruct.super_class = superClass;
+  
+  NOBJC_LOG("CallSuper: Created objc_super struct (receiver=%p, super_class=%s)",
+            self, class_getName(superClass));
 
   // For super calls, we use objc_msgSendSuper / objc_msgSendSuper_stret
   // depending on the return type. However, this is complex on ARM64.
@@ -674,22 +679,98 @@ Napi::Value CallSuper(const Napi::CallbackInfo &info) {
   // This is what the compiler generates for [super method]
 
   const char *returnType = SimplifyTypeEncoding([methodSig methodReturnType]);
+  
+  NOBJC_LOG("CallSuper: Return type encoding: %s", returnType);
+  NOBJC_LOG("CallSuper: About to call objc_msgSendSuper with %zu arguments", 
+            providedArgCount);
 
-  // Call via objc_msgSendSuper for common return types
-  // Note: ARM64 uses objc_msgSendSuper for most cases, objc_msgSendSuper_stret
-  // for large struct returns
+  // CRITICAL: The issue is that the switch statement below only handles
+  // methods WITHOUT arguments. For methods WITH arguments, we need to
+  // use NSInvocation to properly forward all arguments.
+  
+  // If we have arguments, use NSInvocation approach instead of direct msgSend
+  if (providedArgCount > 0) {
+    NOBJC_LOG("CallSuper: Using NSInvocation approach for method with arguments");
+    
+    // Invoke using the invocation we already populated
+    [invocation invoke];
+    
+    NOBJC_LOG("CallSuper: NSInvocation completed successfully");
+    
+    // Extract and return the result
+    if (returnType[0] == 'v') {
+      return env.Undefined();
+    } else if (returnType[0] == '@' || returnType[0] == '#') {
+      __unsafe_unretained id result = nil;
+      [invocation getReturnValue:&result];
+      NOBJC_LOG("CallSuper: Got return value: %p", result);
+      if (result == nil) {
+        return env.Null();
+      }
+      return ObjcObject::NewInstance(env, result);
+    } else {
+      // For other return types, extract appropriately
+      switch (returnType[0]) {
+        case 'B': {
+          BOOL result;
+          [invocation getReturnValue:&result];
+          return Napi::Boolean::New(env, result);
+        }
+        case 'c':
+        case 'i':
+        case 's':
+        case 'l': {
+          long result;
+          [invocation getReturnValue:&result];
+          return Napi::Number::New(env, result);
+        }
+        case 'q': {
+          long long result;
+          [invocation getReturnValue:&result];
+          return Napi::Number::New(env, result);
+        }
+        case 'Q': {
+          unsigned long long result;
+          [invocation getReturnValue:&result];
+          return Napi::Number::New(env, result);
+        }
+        case 'f': {
+          float result;
+          [invocation getReturnValue:&result];
+          return Napi::Number::New(env, result);
+        }
+        case 'd': {
+          double result;
+          [invocation getReturnValue:&result];
+          return Napi::Number::New(env, result);
+        }
+        default:
+          NOBJC_ERROR("CallSuper: Unsupported return type '%c'", returnType[0]);
+          throw Napi::Error::New(
+              env, "Unsupported return type '" + std::string(1, returnType[0]) +
+                       "' for super call");
+      }
+    }
+  }
+
+  // For methods WITHOUT arguments, use direct objc_msgSendSuper
+  NOBJC_LOG("CallSuper: Using direct objc_msgSendSuper for method without arguments");
 
   switch (returnType[0]) {
   case 'v': { // void
     // Call and return undefined
+    NOBJC_LOG("CallSuper: Calling void method");
     ((void (*)(struct objc_super *, SEL))objc_msgSendSuper)(&superStruct,
                                                              selector);
+    NOBJC_LOG("CallSuper: Void method completed");
     return env.Undefined();
   }
   case '@':
   case '#': { // id or Class
+    NOBJC_LOG("CallSuper: Calling method returning id/Class");
     id result = ((id(*)(struct objc_super *, SEL))objc_msgSendSuper)(
         &superStruct, selector);
+    NOBJC_LOG("CallSuper: Method returned %p", result);
     if (result == nil) {
       return env.Null();
     }
