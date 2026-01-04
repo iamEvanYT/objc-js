@@ -667,7 +667,7 @@ static Napi::Value CallSuperWithFFI(
       
       // For object types, log the actual pointer value
       if (simpleArgEncoding[0] == '@') {
-        id* objPtr = (id*)bufferPtr;
+        [[maybe_unused]] id* objPtr = (id*)bufferPtr;
         NOBJC_LOG("CallSuperWithFFI: Argument %zu is object: buffer=%p, contains id=%p", 
                   i - argStartIndex, bufferPtr, *objPtr);
       }
@@ -699,14 +699,14 @@ static Napi::Value CallSuperWithFFI(
     NOBJC_LOG("CallSuperWithFFI: Arg 0 (objc_super*): argValues[0]=%p",
               argValues[0]);
     // Log what's actually stored in the buffer
-    objc_super** superPtrPtr = (objc_super**)argValues[0];
+    [[maybe_unused]] objc_super** superPtrPtr = (objc_super**)argValues[0];
     NOBJC_LOG("CallSuperWithFFI:   Buffer contains pointer: %p", *superPtrPtr);
     NOBJC_LOG("CallSuperWithFFI:   objc_super.receiver=%p", superStruct.receiver);
     NOBJC_LOG("CallSuperWithFFI:   objc_super.super_class=%p (%s)", 
               superStruct.super_class, class_getName(superClass));
     NOBJC_LOG("CallSuperWithFFI: Arg 1 (SEL*): argValues[1]=%p",
               argValues[1]);
-    SEL* selPtr = (SEL*)argValues[1];
+    [[maybe_unused]] SEL* selPtr = (SEL*)argValues[1];
     NOBJC_LOG("CallSuperWithFFI:   Buffer contains SEL: %p (%s)", 
               *selPtr, sel_getName(*selPtr));
     
@@ -716,11 +716,11 @@ static Napi::Value CallSuperWithFFI(
       NOBJC_LOG("CallSuperWithFFI: Arg %zu: argValues[%zu]=%p, encoding=%s",
                 i, i, argValues[i], simpleArgEncoding.c_str());
       if (simpleArgEncoding[0] == '@') {
-        id* objPtrLocation = (id*)argValues[i];
+        [[maybe_unused]] id* objPtrLocation = (id*)argValues[i];
         NOBJC_LOG("CallSuperWithFFI:   Object pointer at %p points to id=%p",
                   objPtrLocation, *objPtrLocation);
       } else if (simpleArgEncoding[0] == '^') {
-        void** ptrLocation = (void**)argValues[i];
+        [[maybe_unused]] void** ptrLocation = (void**)argValues[i];
         NOBJC_LOG("CallSuperWithFFI:   Pointer at %p contains: %p",
                   ptrLocation, *ptrLocation);
       }
