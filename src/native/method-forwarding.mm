@@ -66,8 +66,10 @@ void CallJSCallback(Napi::Env env, Napi::Function jsCallback,
     __unsafe_unretained id selfObj;
     [invocation getArgument:&selfObj atIndex:0];
     NOBJC_LOG("CallJSCallback: About to create ObjcObject for self=%p", selfObj);
-    jsArgs.push_back(ObjcObject::NewInstance(env, selfObj));
-    NOBJC_LOG("CallJSCallback: Created ObjcObject for self");
+    Napi::Value selfValue = ObjcObject::NewInstance(env, selfObj);
+    NOBJC_LOG("CallJSCallback: Created ObjcObject for self (JS wrapper created)");
+    jsArgs.push_back(selfValue);
+    NOBJC_LOG("CallJSCallback: Added self to jsArgs");
   }
 
   // Extract remaining arguments (skip self and _cmd, start at index 2)

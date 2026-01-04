@@ -121,7 +121,6 @@ static void SubclassForwardInvocation(id self, SEL _cmd,
   Napi::ThreadSafeFunction tsfn;
   std::string typeEncoding;
   pthread_t js_thread;
-  bool isElectron;
   void *superClassPtr = nullptr;
 
   {
@@ -151,16 +150,10 @@ static void SubclassForwardInvocation(id self, SEL _cmd,
 
     typeEncoding = methodIt->second.typeEncoding;
     js_thread = it->second.js_thread;
-    isElectron = it->second.isElectron;
     superClassPtr = it->second.superClass;
-    
-    NOBJC_LOG("SubclassForwardInvocation: Found method info - isElectron=%d", isElectron);
   }
 
   bool is_js_thread = pthread_equal(pthread_self(), js_thread);
-  
-  NOBJC_LOG("SubclassForwardInvocation: is_js_thread=%d, isElectron=%d, will use TSFN=%d",
-            is_js_thread, isElectron, !(is_js_thread && !isElectron));
 
   auto data = new InvocationData();
   data->invocation = invocation;
