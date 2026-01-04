@@ -598,20 +598,34 @@ static Napi::Value CallSuperWithFFI(
       if (simpleArgEncoding[0] == '^' && simpleArgEncoding[1] == '@') {
         NOBJC_LOG("CallSuperWithFFI: Arg %zu is out-param (^@)", i - argStartIndex);
         
-        // CRITICAL: Always allocate a valid NSError** location
-        // The Apple framework expects a valid pointer, not NULL
-        auto buffer = std::make_unique<uint8_t[]>(sizeof(id));
+        // CRITICAL: For pointer-to-pointer types, we need TWO buffers:
+        // 1. The actual storage location for the id (initialized to nil)
+        // 2. A pointer to that storage (what we pass to the function)
+        
+        // Buffer 1: Storage for the id* (initialized to nil)
+        auto errorStorage = std::make_unique<uint8_t[]>(sizeof(id));
         id nullObj = nil;
-        memcpy(buffer.get(), &nullObj, sizeof(id));
+        memcpy(errorStorage.get(), &nullObj, sizeof(id));
+        void* errorStoragePtr = errorStorage.get();
         
-        void* bufferPtr = buffer.get();
-        NOBJC_LOG("CallSuperWithFFI: Allocated out-param buffer at %p", bufferPtr);
-        NOBJC_LOG("CallSuperWithFFI: Buffer size: %zu bytes", sizeof(id));
-        NOBJC_LOG("CallSuperWithFFI: Buffer contains id: %p", *(id*)bufferPtr);
-        NOBJC_LOG("CallSuperWithFFI: Buffer address will be passed as argument value");
+        NOBJC_LOG("CallSuperWithFFI: Allocated error storage at %p", errorStoragePtr);
+        NOBJC_LOG("CallSuperWithFFI: Error storage contains: %p", *(id*)errorStoragePtr);
         
-        argValues.push_back(bufferPtr);
-        argBuffers.push_back(std::move(buffer));
+        // Buffer 2: Storage for the pointer to errorStorage (this is what argValues needs)
+        auto pointerBuffer = std::make_unique<uint8_t[]>(sizeof(void*));
+        memcpy(pointerBuffer.get(), &errorStoragePtr, sizeof(void*));
+        void* pointerBufferPtr = pointerBuffer.get();
+        
+        NOBJC_LOG("CallSuperWithFFI: Allocated pointer buffer at %p", pointerBufferPtr);
+        NOBJC_LOG("CallSuperWithFFI: Pointer buffer contains: %p (address of error storage)", 
+                  *(void**)pointerBufferPtr);
+        NOBJC_LOG("CallSuperWithFFI: This address will be passed to the method");
+        
+        // CRITICAL: argValues must point to pointerBuffer, not errorStorage
+        // libffi will dereference this to get the address to pass
+        argValues.push_back(pointerBufferPtr);
+        argBuffers.push_back(std::move(errorStorage));
+        argBuffers.push_back(std::move(pointerBuffer));
         continue;
       }
       
