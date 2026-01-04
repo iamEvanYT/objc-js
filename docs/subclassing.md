@@ -210,10 +210,72 @@ NobjcClass.super(self, selectorName, ...args);
 ```
 
 - `self` - The instance (received as first argument in method implementation)
-- `selectorName` - The Objective-C selector name (without `$` notation)
-- `args` - Arguments to pass (currently not supported, see limitations)
+- `selectorName` - The Objective-C selector name (e.g., `"description"`, `"initWithString:"`, `"contentsOfDirectoryAtPath:error:"`)
+- `...args` - Arguments to pass to the superclass method
 
-**Current Limitation:** Super calls only work for zero-argument methods (like `description`, `init`, `hash`, etc.). Support for methods with arguments is planned.
+### Examples
+
+#### Zero Arguments
+
+```typescript
+// Calling super.init()
+init: {
+  types: "@@:",
+  implementation: (self) => {
+    self = NobjcClass.super(self, "init");
+    // Custom initialization
+    return self;
+  }
+}
+```
+
+#### With Arguments
+
+```typescript
+// Calling super with an object argument
+isEqual$: {
+  types: "B@:@",
+  implementation: (self, other) => {
+    // First check if super considers them equal
+    const superEqual = NobjcClass.super(self, "isEqual:", other);
+    if (superEqual) return true;
+
+    // Custom equality check
+    return myCustomEqualityCheck(self, other);
+  }
+}
+```
+
+#### With Out-Parameters
+
+Methods with out-parameters (like `NSError**`) are fully supported:
+
+```typescript
+// Calling super with an NSError** out-parameter
+contentsOfDirectoryAtPath$error$: {
+  types: "@@:@^@",  // Returns NSArray*, takes NSString* and NSError**
+  implementation: (self, path, errorPtr) => {
+    console.log("Custom directory listing for:", path.toString());
+
+    // Call super - pass null for errorPtr
+    const contents = NobjcClass.super(
+      self,
+      "contentsOfDirectoryAtPath:error:",
+      path,
+      null  // or errorPtr if you want to handle errors
+    );
+
+    // Custom processing
+    if (contents) {
+      console.log("Found", contents.count(), "items");
+    }
+
+    return contents;
+  }
+}
+```
+
+**Note:** For out-parameters like `NSError**`, you can pass `null` from JavaScript. The native code will allocate the appropriate storage and pass a valid pointer to the superclass method.
 
 ## Protocol Conformance
 
@@ -347,9 +409,9 @@ console.log(instance.description().toString());
 // "MyClass(<DescriptionExample: 0x123456789>)"
 ```
 
-### Example 5: ASAuthorizationController Subclass
+### Example 5: ASAuthorizationController Subclass with Super Call
 
-This example shows how to subclass `ASAuthorizationController` to override a private method for WebAuthn/passkey operations:
+This example shows how to subclass `ASAuthorizationController` to override a private method for WebAuthn/passkey operations. This demonstrates calling super with both object arguments and out-parameters:
 
 ```typescript
 import { NobjcLibrary, NobjcClass } from "objc-js";
@@ -373,15 +435,24 @@ const MyAuthController = NobjcClass.define({
     "_requestContextWithRequests:error:": {
       types: "@@:@^@", // Returns id, takes NSArray*, NSError**
       implementation: (self, requests, errorPtr) => {
-        // Call super to get the context
-        const context = NobjcClass.super(self, "_requestContextWithRequests:error:");
+        console.log("Custom implementation called");
+
+        // Call super with arguments including the error out-parameter
+        // Pass null for errorPtr - the native code handles this correctly
+        const context = NobjcClass.super(
+          self,
+          "_requestContextWithRequests:error:",
+          requests,
+          null // errorPtr - automatically handled
+        );
 
         if (context) {
           // Create NSData from Buffer
           const hashData = NSData.alloc().initWithBytes$length$(clientDataHash, clientDataHash.length);
 
-          // Set the clientDataHash
+          // Set the clientDataHash on the context
           context.setClientDataHash$(hashData);
+          console.log("clientDataHash set successfully");
         }
 
         return context;
@@ -396,26 +467,77 @@ controller.setDelegate$(delegate);
 controller.performRequests();
 ```
 
+**Key Points:**
+
+- The method signature includes `^@` for the `NSError**` out-parameter
+- When calling super, you can pass `null` for out-parameters
+- The native code properly allocates storage and passes valid pointers to the superclass
+- This pattern works for any method with out-parameters (NSError\*_, id_, etc.)
+
+### Example 6: File Manager Subclass
+
+This example demonstrates overriding a method with multiple arguments, including an out-parameter:
+
+```typescript
+import { NobjcLibrary, NobjcClass } from "objc-js";
+
+const foundation = new NobjcLibrary("/System/Library/Frameworks/Foundation.framework/Foundation");
+const NSFileManager = foundation["NSFileManager"];
+const NSString = foundation["NSString"];
+
+const LoggingFileManager = NobjcClass.define({
+  name: "LoggingFileManager",
+  superclass: "NSFileManager",
+  methods: {
+    contentsOfDirectoryAtPath$error$: {
+      types: "@@:@^@", // Returns NSArray*, takes NSString* path, NSError** error
+      implementation: (self, path, errorPtr) => {
+        console.log("Reading directory:", path.toString());
+
+        // Call super with both arguments
+        const contents = NobjcClass.super(
+          self,
+          "contentsOfDirectoryAtPath:error:",
+          path,
+          null // errorPtr handled automatically
+        );
+
+        if (contents) {
+          const count = contents.count();
+          console.log(`  Found ${count} items`);
+        } else {
+          console.log("  Failed to read directory");
+        }
+
+        return contents;
+      }
+    }
+  }
+});
+
+const manager = LoggingFileManager.alloc().init();
+const tmpPath = NSString.stringWithUTF8String$("/tmp");
+const contents = manager.contentsOfDirectoryAtPath$error$(tmpPath, null);
+```
+
 ## Limitations
 
 ### Current Limitations
 
-1. **Super calls with arguments**: `NobjcClass.super()` currently only supports zero-argument methods. Calling super with arguments is not yet implemented.
+1. **Class clusters**: Cannot subclass class clusters like `NSString`, `NSArray`, `NSDictionary`, `NSNumber`, or `NSMutableString` because they require implementing primitive methods.
 
-   **Workaround:** For simple cases, you can access the superclass directly:
+2. **Struct return types**: Methods that return structs (like `NSRect`, `NSPoint`, `NSSize`) may not work correctly on all architectures.
 
-   ```typescript
-   // This won't work yet:
-   // NobjcClass.super(self, "someMethod:", arg);
+3. **Variadic methods**: Cannot define or call methods with variadic arguments (e.g., `stringWithFormat:, ...`).
 
-   // Current limitation - use direct superclass access if available
-   ```
+### Out-Parameter Support
 
-2. **Class clusters**: Cannot subclass class clusters like `NSString`, `NSArray`, `NSDictionary`, `NSNumber`, or `NSMutableString` because they require implementing primitive methods.
+Out-parameters (like `NSError**`, `id**`) are fully supported in both method definitions and super calls:
 
-3. **Struct return types**: Methods that return structs (like `NSRect`, `NSPoint`, `NSSize`) may not work correctly on all architectures.
-
-4. **Variadic methods**: Cannot define or call methods with variadic arguments (e.g., `stringWithFormat:, ...`).
+- When defining methods with out-parameters, declare them in the type encoding (e.g., `^@` for `NSError**`)
+- When calling super with out-parameters, pass `null` from JavaScript
+- The native code automatically allocates the required storage and passes valid pointers
+- If the superclass writes an error, it will be stored but not currently accessible from JavaScript (this is a limitation for future enhancement)
 
 ### Thread Safety
 

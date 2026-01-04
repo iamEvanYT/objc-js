@@ -178,7 +178,7 @@ See [Subclassing Documentation](./docs/subclassing.md) for more details.
 NobjcClass.super(self: NobjcObject, selector: string, ...args: any[]): any
 ```
 
-Call the superclass implementation of a method. Currently only supports zero-argument methods.
+Call the superclass implementation of a method. Supports methods with any number of arguments, including methods with out-parameters (like `NSError**`).
 
 #### `NobjcProtocol`
 
