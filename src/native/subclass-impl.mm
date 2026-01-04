@@ -111,8 +111,12 @@ static void SubclassForwardInvocation(id self, SEL _cmd,
 
   std::string selectorName = [selectorString UTF8String];
   
+  NOBJC_LOG("SubclassForwardInvocation: Called for selector %s", selectorName.c_str());
+  
   Class cls = object_getClass(self);
   void *clsPtr = (__bridge void *)cls;
+  
+  NOBJC_LOG("SubclassForwardInvocation: Class=%s, clsPtr=%p", class_getName(cls), clsPtr);
 
   Napi::ThreadSafeFunction tsfn;
   std::string typeEncoding;
@@ -149,9 +153,14 @@ static void SubclassForwardInvocation(id self, SEL _cmd,
     js_thread = it->second.js_thread;
     isElectron = it->second.isElectron;
     superClassPtr = it->second.superClass;
+    
+    NOBJC_LOG("SubclassForwardInvocation: Found method info - isElectron=%d", isElectron);
   }
 
   bool is_js_thread = pthread_equal(pthread_self(), js_thread);
+  
+  NOBJC_LOG("SubclassForwardInvocation: is_js_thread=%d, isElectron=%d, will use TSFN=%d",
+            is_js_thread, isElectron, !(is_js_thread && !isElectron));
 
   auto data = new InvocationData();
   data->invocation = invocation;
@@ -163,15 +172,18 @@ static void SubclassForwardInvocation(id self, SEL _cmd,
 
   napi_status status;
 
-  if (is_js_thread && !isElectron) {
-    // Direct call on JS thread (Node/Bun, NOT Electron)
+  // IMPORTANT: Always try direct call when on JS thread (including Electron)
+  // The direct call will catch exceptions and fall back to TSFN if needed
+  // Only use TSFN+runloop when on a DIFFERENT thread
+  if (is_js_thread) {
+    // Direct call on JS thread (Node/Bun/Electron)
+    NOBJC_LOG("SubclassForwardInvocation: Using direct call path (JS thread)");
     data->completionMutex = nullptr;
     data->completionCv = nullptr;
     data->isComplete = nullptr;
 
     tsfn.Release();
 
-    Napi::Function jsFn;
     napi_env stored_env;
     {
       std::lock_guard<std::mutex> lock(g_subclasses_mutex);
@@ -193,14 +205,30 @@ static void SubclassForwardInvocation(id self, SEL _cmd,
       }
 
       stored_env = it->second.env;
-      jsFn = methodIt->second.jsCallback.Value();
+      // Don't get the function value here - do it inside the HandleScope
     }
 
     try {
+      NOBJC_LOG("SubclassForwardInvocation: About to call JS callback directly");
       Napi::Env callEnv(stored_env);
       Napi::HandleScope scope(callEnv);
+      
+      // Get the JS function within the HandleScope
+      Napi::Function jsFn;
+      {
+        std::lock_guard<std::mutex> lock(g_subclasses_mutex);
+        auto it = g_subclasses.find(clsPtr);
+        if (it != g_subclasses.end()) {
+          auto methodIt = it->second.methods.find(selectorName);
+          if (methodIt != it->second.methods.end()) {
+            jsFn = methodIt->second.jsCallback.Value();
+          }
+        }
+      }
+      
       CallJSCallback(callEnv, jsFn, data);  // Use unified CallJSCallback
       // CallJSCallback releases invocation and deletes data.
+      NOBJC_LOG("SubclassForwardInvocation: Direct call succeeded");
     } catch (const std::exception &e) {
       NOBJC_ERROR("Error calling JS callback directly (likely invalid env in Electron): %s", 
                   e.what());
@@ -232,7 +260,8 @@ static void SubclassForwardInvocation(id self, SEL _cmd,
       delete data;
     }
   } else {
-    // Cross-thread call via TSFN or Electron (always use TSFN)
+    // Cross-thread call via TSFN (NOT on JS thread)
+    NOBJC_LOG("SubclassForwardInvocation: Using TSFN+runloop path (different thread)");
     std::mutex completionMutex;
     std::condition_variable completionCv;
     bool isComplete = false;
@@ -241,8 +270,13 @@ static void SubclassForwardInvocation(id self, SEL _cmd,
     data->completionCv = &completionCv;
     data->isComplete = &isComplete;
 
+    NOBJC_LOG("SubclassForwardInvocation: About to call NonBlockingCall for selector %s", 
+              selectorName.c_str());
+
     status = tsfn.NonBlockingCall(data, CallJSCallback);  // Use unified CallJSCallback
     tsfn.Release();
+
+    NOBJC_LOG("SubclassForwardInvocation: NonBlockingCall returned status=%d", status);
 
     if (status != napi_ok) {
       NOBJC_ERROR("Failed to call ThreadSafeFunction for selector %s (status: %d)",

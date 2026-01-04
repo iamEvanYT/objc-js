@@ -19,6 +19,9 @@ void CallJSCallback(Napi::Env env, Napi::Function jsCallback,
     return;
   }
 
+  NOBJC_LOG("CallJSCallback: Called for selector %s, callbackType=%d", 
+            data->selectorName.c_str(), (int)data->callbackType);
+
   // Check if the callback is valid before proceeding
   if (jsCallback.IsEmpty()) {
     NOBJC_ERROR("jsCallback is null/empty in CallJSCallback for selector %s",
@@ -39,6 +42,8 @@ void CallJSCallback(Napi::Env env, Napi::Function jsCallback,
     return;
   }
 
+  NOBJC_LOG("CallJSCallback: About to get method signature");
+
   // Extract arguments using NSInvocation
   NSMethodSignature *sig = [invocation methodSignature];
   if (!sig) {
@@ -50,33 +55,48 @@ void CallJSCallback(Napi::Env env, Napi::Function jsCallback,
     return;
   }
 
+  NOBJC_LOG("CallJSCallback: Method signature: %s, numArgs: %lu", 
+            [sig description].UTF8String, (unsigned long)[sig numberOfArguments]);
+
   std::vector<napi_value> jsArgs;
 
   // For subclass methods, include 'self' as first JavaScript argument
   if (data->callbackType == CallbackType::Subclass) {
+    NOBJC_LOG("CallJSCallback: Extracting 'self' argument for subclass method");
     __unsafe_unretained id selfObj;
     [invocation getArgument:&selfObj atIndex:0];
+    NOBJC_LOG("CallJSCallback: About to create ObjcObject for self=%p", selfObj);
     jsArgs.push_back(ObjcObject::NewInstance(env, selfObj));
+    NOBJC_LOG("CallJSCallback: Created ObjcObject for self");
   }
 
   // Extract remaining arguments (skip self and _cmd, start at index 2)
+  NOBJC_LOG("CallJSCallback: Extracting %lu method arguments", (unsigned long)[sig numberOfArguments] - 2);
   for (NSUInteger i = 2; i < [sig numberOfArguments]; i++) {
     const char *type = [sig getArgumentTypeAtIndex:i];
     SimplifiedTypeEncoding argType(type);
     
+    NOBJC_LOG("CallJSCallback: Processing arg %lu, type=%s, simplified=%s", 
+              (unsigned long)i, type, argType.c_str());
+    
     // Handle out-parameters (e.g., NSError**) by passing null
     // This avoids creating N-API Function objects which triggers Bun crashes
     if (argType[0] == '^' && argType[1] == '@') {
+      NOBJC_LOG("CallJSCallback: Arg %lu is out-param (^@), passing null", (unsigned long)i);
       jsArgs.push_back(env.Null());
       continue;
     }
     
+    NOBJC_LOG("CallJSCallback: About to extract arg %lu to JS", (unsigned long)i);
     jsArgs.push_back(ExtractInvocationArgumentToJS(env, invocation, i, argType[0]));
+    NOBJC_LOG("CallJSCallback: Successfully extracted arg %lu", (unsigned long)i);
   }
 
   // Call the JavaScript callback
   try {
+    NOBJC_LOG("CallJSCallback: About to call JS function with %zu args", jsArgs.size());
     Napi::Value result = jsCallback.Call(jsArgs);
+    NOBJC_LOG("CallJSCallback: JS function returned successfully");
 
     // Handle return value if the method expects one
     const char *returnType = [sig methodReturnType];
@@ -98,7 +118,9 @@ void CallJSCallback(Napi::Env env, Napi::Function jsCallback,
   }
 
   // Signal completion to the waiting ForwardInvocation
+  NOBJC_LOG("CallJSCallback: About to signal completion for %s", data->selectorName.c_str());
   SignalInvocationComplete(data);
+  NOBJC_LOG("CallJSCallback: Signaled completion for %s", data->selectorName.c_str());
 
   // Clean up the invocation data
   // Release the invocation that we retained in ForwardInvocation

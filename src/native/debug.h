@@ -1,7 +1,7 @@
 #ifndef DEBUG_H
 #define DEBUG_H
 
-#define NOBJC_DEBUG 0
+#define NOBJC_DEBUG 1
 
 // Conditional logging macro - only logs when NOBJC_DEBUG is 1
 #if NOBJC_DEBUG
