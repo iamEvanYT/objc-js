@@ -173,6 +173,10 @@ template <typename T>
 T ConvertToNativeValue(const Napi::Value &value,
                        const ObjcArgumentContext &context) {
   if constexpr (std::is_same_v<T, id>) {
+    // Handle null/undefined as nil
+    if (value.IsNull() || value.IsUndefined()) {
+      return nil;
+    }
     // is value an ObjcObject instance?
     if (value.IsObject()) {
       Napi::Object obj = value.As<Napi::Object>();
@@ -183,6 +187,10 @@ T ConvertToNativeValue(const Napi::Value &value,
     }
   }
   if constexpr (std::is_same_v<T, SEL>) {
+    // Handle null/undefined as NULL selector
+    if (value.IsNull() || value.IsUndefined()) {
+      return nullptr;
+    }
     if (!value.IsString()) {
       throw Napi::TypeError::New(value.Env(),
                                  CONVERT_ARG_ERROR_MSG("Expected a string"));
@@ -191,18 +199,30 @@ T ConvertToNativeValue(const Napi::Value &value,
     return sel_registerName(selName.c_str());
   }
   if constexpr (std::is_same_v<T, bool>) {
+    // Handle null/undefined as false
+    if (value.IsNull() || value.IsUndefined()) {
+      return false;
+    }
     if (!value.IsBoolean()) {
       throw Napi::TypeError::New(value.Env(),
                                  CONVERT_ARG_ERROR_MSG("Expected a boolean"));
     }
     return value.As<Napi::Boolean>().Value();
   } else if constexpr (std::is_same_v<T, std::string>) {
+    // Handle null/undefined as empty string
+    if (value.IsNull() || value.IsUndefined()) {
+      return std::string();
+    }
     if (!value.IsString()) {
       throw Napi::TypeError::New(value.Env(),
                                  CONVERT_ARG_ERROR_MSG("Expected a string"));
     }
     return value.As<Napi::String>().Utf8Value();
   } else if constexpr (std::is_arithmetic_v<T>) {
+    // Handle null/undefined as 0
+    if (value.IsNull() || value.IsUndefined()) {
+      return static_cast<T>(0);
+    }
     if (value.IsNumber()) {
       return ConvertJSNumberToNativeValue<T>(value, context);
     } else if (value.IsBigInt()) {

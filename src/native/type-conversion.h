@@ -478,13 +478,7 @@ inline void SetInvocationReturnFromJS(NSInvocation *invocation,
         ObjcObject *objcObj = Napi::ObjectWrap<ObjcObject>::Unwrap(resultObj);
         id objcValue = objcObj->objcObject;
         [invocation setReturnValue:&objcValue];
-      } else if (result.IsNull() || result.IsUndefined()) {
-        id nilValue = nil;
-        [invocation setReturnValue:&nilValue];
       }
-    } else if (result.IsNull() || result.IsUndefined()) {
-      id nilValue = nil;
-      [invocation setReturnValue:&nilValue];
     }
     break;
   }

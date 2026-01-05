@@ -164,4 +164,25 @@ describe("NobjcObject Argument Unwrapping Tests", () => {
       expect(mutableStr.UTF8String()).toBe("Hello World");
     });
   });
+
+  describe("Null object arguments", () => {
+    test("should accept null as an object argument to isEqualToString:", () => {
+      const str = NSString["stringWithUTF8String:"]("Hello");
+
+      // isEqualToString: with nil should return false (not crash)
+      const result = str.isEqualToString$(null as any);
+
+      expect(result).toBe(false);
+    });
+
+    test("should accept null in dictionary lookup", () => {
+      const dict = NSMutableDictionary.dictionary();
+
+      // objectForKey: with nil should not crash
+      const result = dict.objectForKey$(null as any);
+
+      // Looking up nil key returns nil
+      expect(result).toBeNull();
+    });
+  });
 });
