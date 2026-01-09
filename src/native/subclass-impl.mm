@@ -2,6 +2,7 @@
 #include "bridge.h"
 #include "debug.h"
 #include "ffi-utils.h"
+#include "memory-utils.h"
 #include "method-forwarding.h"
 #include "ObjcObject.h"
 #include "protocol-storage.h"
@@ -155,13 +156,17 @@ static void SubclassForwardInvocation(id self, SEL _cmd,
 
   bool is_js_thread = pthread_equal(pthread_self(), js_thread);
 
+  // Create invocation data with RAII guard
   auto data = new InvocationData();
   data->invocation = invocation;
   data->selectorName = selectorName;
   data->typeEncoding = typeEncoding;
   data->instancePtr = (__bridge void *)self;
   data->superClassPtr = superClassPtr;
-  data->callbackType = CallbackType::Subclass;  // Set callback type
+  data->callbackType = CallbackType::Subclass;
+  
+  // RAII guard ensures cleanup on error paths
+  InvocationDataGuard dataGuard(data);
 
   napi_status status;
 
@@ -183,18 +188,14 @@ static void SubclassForwardInvocation(id self, SEL _cmd,
       auto it = g_subclasses.find(clsPtr);
       if (it == g_subclasses.end()) {
         NOBJC_WARN("Subclass implementation not found for class %p (JS thread path)", cls);
-        [invocation release];
-        delete data;
-        return;
+        return;  // dataGuard cleans up
       }
 
       auto methodIt = it->second.methods.find(selectorName);
       if (methodIt == it->second.methods.end()) {
         NOBJC_WARN("Method not found for selector %s (JS thread path)", 
                    selectorName.c_str());
-        [invocation release];
-        delete data;
-        return;
+        return;  // dataGuard cleans up
       }
 
       stored_env = it->second.env;
@@ -219,14 +220,24 @@ static void SubclassForwardInvocation(id self, SEL _cmd,
         }
       }
       
-      CallJSCallback(callEnv, jsFn, data);  // Use unified CallJSCallback
-      // CallJSCallback releases invocation and deletes data.
+      // Transfer ownership to CallJSCallback
+      CallJSCallback(callEnv, jsFn, dataGuard.release());
       NOBJC_LOG("SubclassForwardInvocation: Direct call succeeded");
     } catch (const std::exception &e) {
       NOBJC_ERROR("Error calling JS callback directly (likely invalid env in Electron): %s", 
                   e.what());
       NOBJC_LOG("Falling back to ThreadSafeFunction for selector %s", 
                 selectorName.c_str());
+      
+      // Re-create data for fallback since we may have released it
+      auto fallbackData = new InvocationData();
+      fallbackData->invocation = invocation;
+      fallbackData->selectorName = selectorName;
+      fallbackData->typeEncoding = typeEncoding;
+      fallbackData->instancePtr = (__bridge void *)self;
+      fallbackData->superClassPtr = superClassPtr;
+      fallbackData->callbackType = CallbackType::Subclass;
+      InvocationDataGuard fallbackGuard(fallbackData);
       
       // Fallback to TSFN if direct call fails
       {
@@ -238,8 +249,8 @@ static void SubclassForwardInvocation(id self, SEL _cmd,
             tsfn = methodIt->second.callback;
             napi_status acq_status = tsfn.Acquire();
             if (acq_status == napi_ok) {
-              // Use helper function for fallback
-              if (FallbackToTSFN(tsfn, data, selectorName)) {
+              // Transfer ownership to fallback - it will clean up
+              if (FallbackToTSFN(tsfn, fallbackGuard.release(), selectorName)) {
                 return; // Data cleaned up in callback
               }
               NOBJC_ERROR("SubclassForwardInvocation: Fallback failed");
@@ -247,10 +258,7 @@ static void SubclassForwardInvocation(id self, SEL _cmd,
           }
         }
       }
-      
-      // If fallback also failed, clean up manually
-      [invocation release];
-      delete data;
+      // If we get here, fallbackGuard cleans up
     }
   } else {
     // Cross-thread call via TSFN (NOT on JS thread)
@@ -266,7 +274,8 @@ static void SubclassForwardInvocation(id self, SEL _cmd,
     NOBJC_LOG("SubclassForwardInvocation: About to call NonBlockingCall for selector %s", 
               selectorName.c_str());
 
-    status = tsfn.NonBlockingCall(data, CallJSCallback);  // Use unified CallJSCallback
+    // Transfer ownership to TSFN callback
+    status = tsfn.NonBlockingCall(dataGuard.release(), CallJSCallback);
     tsfn.Release();
 
     NOBJC_LOG("SubclassForwardInvocation: NonBlockingCall returned status=%d", status);
@@ -274,6 +283,7 @@ static void SubclassForwardInvocation(id self, SEL _cmd,
     if (status != napi_ok) {
       NOBJC_ERROR("Failed to call ThreadSafeFunction for selector %s (status: %d)",
             selectorName.c_str(), status);
+      // We already released from guard, so clean up manually
       [invocation release];
       delete data;
       return;

@@ -12,6 +12,102 @@
 #include "bridge.h"
 #include "type-conversion.h"
 
+// MARK: - FFITypeGuard RAII Wrapper
+
+/**
+ * RAII wrapper for managing dynamically allocated ffi_type structs.
+ * 
+ * FFI struct types require heap allocation for their elements arrays.
+ * This class ensures proper cleanup when going out of scope, even if
+ * exceptions are thrown.
+ * 
+ * Usage:
+ *   FFITypeGuard guard;
+ *   ffi_type* structType = ParseStructEncoding(encoding, &size, guard);
+ *   // ... use structType ...
+ *   // Cleanup happens automatically when guard goes out of scope
+ */
+class FFITypeGuard {
+public:
+  FFITypeGuard() = default;
+  
+  // Non-copyable
+  FFITypeGuard(const FFITypeGuard&) = delete;
+  FFITypeGuard& operator=(const FFITypeGuard&) = delete;
+  
+  // Movable
+  FFITypeGuard(FFITypeGuard&& other) noexcept : allocatedTypes_(std::move(other.allocatedTypes_)) {
+    other.allocatedTypes_.clear();
+  }
+  
+  FFITypeGuard& operator=(FFITypeGuard&& other) noexcept {
+    if (this != &other) {
+      cleanup();
+      allocatedTypes_ = std::move(other.allocatedTypes_);
+      other.allocatedTypes_.clear();
+    }
+    return *this;
+  }
+  
+  ~FFITypeGuard() {
+    cleanup();
+  }
+  
+  /**
+   * Add a dynamically allocated ffi_type to be managed.
+   * The guard takes ownership and will free it on destruction.
+   */
+  void add(ffi_type* type) {
+    if (type) {
+      allocatedTypes_.push_back(type);
+#if NOBJC_DEBUG
+      NOBJC_LOG("FFITypeGuard: added type=%p (total: %zu)", type, allocatedTypes_.size());
+#endif
+    }
+  }
+  
+  /**
+   * Get the underlying vector (for passing to legacy functions).
+   */
+  std::vector<ffi_type*>& types() { return allocatedTypes_; }
+  
+  /**
+   * Release ownership of all types without cleanup.
+   * Use when transferring ownership elsewhere.
+   */
+  std::vector<ffi_type*> release() {
+    std::vector<ffi_type*> result = std::move(allocatedTypes_);
+    allocatedTypes_.clear();
+#if NOBJC_DEBUG
+    NOBJC_LOG("FFITypeGuard: released ownership of %zu types", result.size());
+#endif
+    return result;
+  }
+  
+  /**
+   * Get number of managed types.
+   */
+  size_t size() const { return allocatedTypes_.size(); }
+  
+private:
+  void cleanup() {
+    if (!allocatedTypes_.empty()) {
+#if NOBJC_DEBUG
+      NOBJC_LOG("FFITypeGuard: cleaning up %zu types", allocatedTypes_.size());
+#endif
+      for (ffi_type* type : allocatedTypes_) {
+        if (type && type->type == FFI_TYPE_STRUCT && type->elements) {
+          delete[] type->elements;
+        }
+        delete type;
+      }
+      allocatedTypes_.clear();
+    }
+  }
+  
+  std::vector<ffi_type*> allocatedTypes_;
+};
+
 // MARK: - Type Size Calculation
 
 inline size_t GetSizeForTypeEncoding(char typeCode) {
@@ -73,9 +169,15 @@ inline ffi_type* GetFFITypeForSimpleEncoding(char typeCode) {
   }
 }
 
-// Forward declaration
+// Forward declarations
 inline ffi_type* GetFFITypeForEncoding(const char* encoding, size_t* outSize, 
                                       std::vector<ffi_type*>& allocatedTypes);
+
+// Overload that works with FFITypeGuard (preferred)
+inline ffi_type* GetFFITypeForEncoding(const char* encoding, size_t* outSize, 
+                                      FFITypeGuard& guard) {
+  return GetFFITypeForEncoding(encoding, outSize, guard.types());
+}
 
 // MARK: - Struct Type Parsing
 
