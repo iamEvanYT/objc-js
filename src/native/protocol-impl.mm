@@ -3,6 +3,7 @@
 #include "method-forwarding.h"
 #include "ObjcObject.h"
 #include "protocol-storage.h"
+#include "runtime-detection.h"
 #include "type-conversion.h"
 #include <Foundation/Foundation.h>
 #include <atomic>
@@ -130,24 +131,8 @@ Napi::Value CreateProtocolImplementation(const Napi::CallbackInfo &info) {
   // Get the method implementations object's property names
   Napi::Array propertyNames = methodImplementations.GetPropertyNames();
 
-  // Detect if we're running in Electron by checking process.versions.electron
-  bool isElectron = false;
-  try {
-    Napi::Object global = env.Global();
-    if (global.Has("process")) {
-      Napi::Object process = global.Get("process").As<Napi::Object>();
-      if (process.Has("versions")) {
-        Napi::Object versions = process.Get("versions").As<Napi::Object>();
-        isElectron = versions.Has("electron");
-      }
-    }
-  } catch (...) {
-    // If detection fails, assume not Electron
-  }
-  
-  if (isElectron) {
-    // Electron runtime detected, will always use TSFN path
-  }
+  // Detect if we're running in Electron
+  bool isElectron = IsElectronRuntime(env);
 
   // Store callbacks for this instance (we'll set the instance pointer later)
   ProtocolImplementation impl{

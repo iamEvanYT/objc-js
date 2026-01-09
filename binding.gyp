@@ -7,7 +7,8 @@
                 "src/native/ObjcObject.mm",
                 "src/native/protocol-impl.mm",
                 "src/native/method-forwarding.mm",
-                "src/native/subclass-impl.mm"
+                "src/native/subclass-impl.mm",
+                "src/native/forwarding-common.mm"
             ],
             "defines": [
                 "NODE_ADDON_API_CPP_EXCEPTIONS",

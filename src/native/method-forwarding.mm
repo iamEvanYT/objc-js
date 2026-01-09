@@ -1,5 +1,6 @@
 #include "method-forwarding.h"
 #include "debug.h"
+#include "forwarding-common.h"
 #include "memory-utils.h"
 #include "ObjcObject.h"
 #include "protocol-storage.h"
@@ -219,9 +220,8 @@ void ForwardInvocation(id self, SEL _cmd, NSInvocation *invocation) {
   }
 
   // Retain the invocation to keep it alive during async call
-  // retainArguments only retains the arguments, not the invocation itself
   [invocation retainArguments];
-  [invocation retain]; // Keep invocation alive until callback completes
+  [invocation retain];
 
   SEL selector = [invocation selector];
   NSString *selectorString = NSStringFromSelector(selector);
@@ -232,201 +232,93 @@ void ForwardInvocation(id self, SEL _cmd, NSInvocation *invocation) {
   }
 
   std::string selectorName = [selectorString UTF8String];
-
-  // Store self pointer for later lookups
   void *ptr = (__bridge void *)self;
 
-  // Get thread-safe data (TSFN, typeEncoding, js_thread)
-  // DO NOT access any N-API values here - we may not be on the JS thread!
-  Napi::ThreadSafeFunction tsfn;
-  std::string typeEncoding;
-  pthread_t js_thread;
-  bool isElectron;
-  {
+  // Set up callbacks for protocol-specific storage access
+  ForwardingCallbacks callbacks;
+  callbacks.callbackType = CallbackType::Protocol;
+
+  // Lookup context and acquire TSFN
+  callbacks.lookupContext = [](void *lookupKey,
+                               const std::string &selName) -> std::optional<ForwardingContext> {
     std::lock_guard<std::mutex> lock(g_implementations_mutex);
-    auto it = g_implementations.find(ptr);
+    auto it = g_implementations.find(lookupKey);
     if (it == g_implementations.end()) {
-      NOBJC_WARN("Protocol implementation not found for instance %p", self);
-      [invocation release];
-      return;
+      NOBJC_WARN("Protocol implementation not found for instance %p", lookupKey);
+      return std::nullopt;
     }
 
-    auto callbackIt = it->second.callbacks.find(selectorName);
+    auto callbackIt = it->second.callbacks.find(selName);
     if (callbackIt == it->second.callbacks.end()) {
-      NOBJC_WARN("Callback not found for selector %s", selectorName.c_str());
-      [invocation release];
-      return;
+      NOBJC_WARN("Callback not found for selector %s", selName.c_str());
+      return std::nullopt;
     }
 
-    // Get the ThreadSafeFunction - this is thread-safe by design
-    // IMPORTANT: We must Acquire() to increment the ref count, because copying
-    // a ThreadSafeFunction does NOT increment it. If DeallocImplementation
-    // runs and calls Release() on the original, our copy would become invalid.
-    tsfn = callbackIt->second;
+    // Acquire the TSFN
+    Napi::ThreadSafeFunction tsfn = callbackIt->second;
     napi_status acq_status = tsfn.Acquire();
     if (acq_status != napi_ok) {
-      NOBJC_WARN("Failed to acquire ThreadSafeFunction for selector %s",
-            selectorName.c_str());
-      [invocation release];
-      return;
+      NOBJC_WARN("Failed to acquire ThreadSafeFunction for selector %s", selName.c_str());
+      return std::nullopt;
     }
 
-    // Get the type encoding for return value handling
-    auto encIt = it->second.typeEncodings.find(selectorName);
+    ForwardingContext ctx;
+    ctx.tsfn = tsfn;
+    ctx.js_thread = it->second.js_thread;
+    ctx.env = it->second.env;
+    ctx.skipDirectCallForElectron = it->second.isElectron;
+    ctx.instancePtr = nullptr;   // Not used for protocols
+    ctx.superClassPtr = nullptr; // Not used for protocols
+
+    auto encIt = it->second.typeEncodings.find(selName);
     if (encIt != it->second.typeEncodings.end()) {
-      typeEncoding = encIt->second;
+      ctx.typeEncoding = encIt->second;
     }
 
-    // Get the JS thread ID to check if we're on the same thread
-    js_thread = it->second.js_thread;
-    isElectron = it->second.isElectron;
-  }
+    return ctx;
+  };
 
-  // Check if we're on the JS thread
-  bool is_js_thread = pthread_equal(pthread_self(), js_thread);
-
-  // IMPORTANT: We call directly on the JS thread so return values are set
-  // synchronously; otherwise we use a ThreadSafeFunction to marshal work.
-  // EXCEPTION: In Electron, we ALWAYS use TSFN even on the JS thread because
-  // Electron's V8 context isn't properly set up for direct handle creation.
-
-  // Create invocation data with RAII guard
-  // The guard will clean up if we don't transfer ownership
-  auto data = new InvocationData();
-  data->invocation = invocation;
-  data->selectorName = selectorName;
-  data->typeEncoding = typeEncoding;
-  data->callbackType = CallbackType::Protocol;
-  
-  // Use RAII to ensure cleanup on error paths
-  InvocationDataGuard dataGuard(data);
-
-  napi_status status;
-
-  if (is_js_thread && !isElectron) {
-    // We're on the JS thread in Node/Bun (NOT Electron)
-    // Call directly to ensure return values are set synchronously.
-    data->completionMutex = nullptr;
-    data->completionCv = nullptr;
-    data->isComplete = nullptr;
-
-    tsfn.Release();
-
-    Napi::Function jsFn;
-    napi_env stored_env;
-    {
-      std::lock_guard<std::mutex> lock(g_implementations_mutex);
-      auto it = g_implementations.find(ptr);
-      if (it == g_implementations.end()) {
-        NOBJC_WARN("Protocol implementation not found for instance %p (JS thread path)", self);
-        return;  // dataGuard cleans up
-      }
-
-      auto jsCallbackIt = it->second.jsCallbacks.find(selectorName);
-      if (jsCallbackIt == it->second.jsCallbacks.end()) {
-        NOBJC_WARN("JS callback not found for selector %s (JS thread path)",
-              selectorName.c_str());
-        return;  // dataGuard cleans up
-      }
-
-      stored_env = it->second.env;
-      jsFn = jsCallbackIt->second.Value();
+  // Get JS function for direct call path
+  callbacks.getJSFunction = [](void *lookupKey, const std::string &selName,
+                               Napi::Env env) -> Napi::Function {
+    std::lock_guard<std::mutex> lock(g_implementations_mutex);
+    auto it = g_implementations.find(lookupKey);
+    if (it == g_implementations.end()) {
+      return Napi::Function();
     }
 
-    // Safely call the JS callback with proper V8 context setup
-    // Wrap in try-catch to handle invalid env (e.g., in Electron when context
-    // is destroyed)
-    try {
-      Napi::Env callEnv(stored_env);
-      
-      // Create a HandleScope to properly manage V8 handles
-      // This is critical for Electron which may have multiple V8 contexts
-      Napi::HandleScope scope(callEnv);
-      
-      // Transfer ownership to CallJSCallback - it will clean up
-      CallJSCallback(callEnv, jsFn, dataGuard.release());
-    } catch (const std::exception &e) {
-      NOBJC_ERROR("Error calling JS callback directly (likely invalid env in Electron): %s", e.what());
-      NOBJC_LOG("Falling back to ThreadSafeFunction for selector %s", selectorName.c_str());
-      
-      // Fallback to TSFN if direct call fails (e.g., invalid env in Electron)
-      // Note: dataGuard.release() was already called, so we need to re-create data
-      // Actually, if release() was called and CallJSCallback threw before taking ownership,
-      // we have a leak. But CallJSCallback uses RAII internally, so it should be safe.
-      // The exception would have to occur before CallJSCallback's guard takes over.
-      // For safety, let's assume data was handled if release() was called.
-      
-      // Re-create data for fallback attempt
-      auto fallbackData = new InvocationData();
-      fallbackData->invocation = invocation;
-      fallbackData->selectorName = selectorName;
-      fallbackData->typeEncoding = typeEncoding;
-      fallbackData->callbackType = CallbackType::Protocol;
-      InvocationDataGuard fallbackGuard(fallbackData);
-      
-      // We need to re-acquire the TSFN
-      {
-        std::lock_guard<std::mutex> lock(g_implementations_mutex);
-        auto it = g_implementations.find(ptr);
-        if (it != g_implementations.end()) {
-          auto callbackIt = it->second.callbacks.find(selectorName);
-          if (callbackIt != it->second.callbacks.end()) {
-            tsfn = callbackIt->second;
-            napi_status acq_status = tsfn.Acquire();
-            if (acq_status == napi_ok) {
-              // Use helper function for fallback - transfers ownership
-              if (FallbackToTSFN(tsfn, fallbackGuard.release(), selectorName)) {
-                return; // Data cleaned up in callback
-              }
-            }
-          }
-        }
-      }
-      // If we get here, fallbackGuard cleans up
-    }
-  } else {
-    // We're on a different thread (e.g., Cocoa callback from
-    // ASAuthorizationController) Use NonBlockingCall + runloop pumping to avoid
-    // deadlocks
-    std::mutex completionMutex;
-    std::condition_variable completionCv;
-    bool isComplete = false;
-
-    data->completionMutex = &completionMutex;
-    data->completionCv = &completionCv;
-    data->isComplete = &isComplete;
-
-    // Transfer ownership to TSFN callback
-    status = tsfn.NonBlockingCall(dataGuard.release(), CallJSCallback);
-    tsfn.Release();
-
-    if (status != napi_ok) {
-      NOBJC_ERROR("Failed to call ThreadSafeFunction for selector %s (status: %d)",
-            selectorName.c_str(), status);
-      // NonBlockingCall failed, but we already released from guard
-      // We need to clean up manually here
-      [invocation release];
-      delete data;
-      return;
+    auto jsCallbackIt = it->second.jsCallbacks.find(selName);
+    if (jsCallbackIt == it->second.jsCallbacks.end()) {
+      return Napi::Function();
     }
 
-    // Wait for callback by pumping CFRunLoop
-    // This allows the event loop to process our callback
-    CFTimeInterval timeout = 0.001; // 1ms per iteration
+    return jsCallbackIt->second.Value();
+  };
 
-    while (true) {
-      {
-        std::unique_lock<std::mutex> lock(completionMutex);
-        if (isComplete) {
-          break;
-        }
-      }
-      CFRunLoopRunInMode(kCFRunLoopDefaultMode, timeout, true);
+  // Re-acquire TSFN for fallback path
+  callbacks.reacquireTSFN = [](void *lookupKey,
+                               const std::string &selName) -> std::optional<Napi::ThreadSafeFunction> {
+    std::lock_guard<std::mutex> lock(g_implementations_mutex);
+    auto it = g_implementations.find(lookupKey);
+    if (it == g_implementations.end()) {
+      return std::nullopt;
     }
-    // Data cleaned up in callback
-  }
 
-  // Return value (if any) has been set on the invocation
+    auto callbackIt = it->second.callbacks.find(selName);
+    if (callbackIt == it->second.callbacks.end()) {
+      return std::nullopt;
+    }
+
+    Napi::ThreadSafeFunction tsfn = callbackIt->second;
+    napi_status acq_status = tsfn.Acquire();
+    if (acq_status != napi_ok) {
+      return std::nullopt;
+    }
+
+    return tsfn;
+  };
+
+  ForwardInvocationCommon(invocation, selectorName, ptr, callbacks);
 }
 
 // Deallocation implementation

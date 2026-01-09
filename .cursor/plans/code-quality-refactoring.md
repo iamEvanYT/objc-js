@@ -21,12 +21,12 @@ This plan addresses code quality, performance, redundant code removal, and memor
 
 ### Phase 2: Remove Code Duplication
 
-- [ ] Create `ForwardInvocationCommon()` shared logic
-- [ ] Create `pointer-utils.h` with `WritePointerToBuffer()`
-- [ ] Create template-based type dispatch in `type-conversion.h`
-- [ ] Create `runtime-detection.h` with `IsElectronRuntime()`
-- [ ] Consolidate duplicate code paths
-- [ ] Run tests after Phase 2
+- [x] Create `ForwardInvocationCommon()` shared logic (forwarding-common.h/mm)
+- [x] Create `pointer-utils.h` with `WritePointerToBuffer()`, `ReadPointerFromBuffer()`, etc.
+- [ ] Create template-based type dispatch in `type-conversion.h` (deferred - lower priority)
+- [x] Create `runtime-detection.h` with `IsElectronRuntime()`
+- [x] Consolidate duplicate code paths (ForwardInvocation now uses common impl)
+- [x] Run tests after Phase 2 (90 pass, 2 skip, 0 fail)
 
 ### Phase 3: Performance Optimizations
 

@@ -1,4 +1,5 @@
 #include "ObjcObject.h"
+#include "pointer-utils.h"
 #include "protocol-impl.h"
 #include "subclass-impl.h"
 #include <Foundation/Foundation.h>
@@ -44,18 +45,7 @@ Napi::Value GetPointer(const Napi::CallbackInfo &info) {
   }
   
   ObjcObject *objcObj = Napi::ObjectWrap<ObjcObject>::Unwrap(obj);
-  uintptr_t ptrValue = reinterpret_cast<uintptr_t>(objcObj->objcObject);
-  
-  // Create a Buffer to hold the pointer (8 bytes on 64-bit macOS)
-  Napi::Buffer<uint8_t> buffer = Napi::Buffer<uint8_t>::New(env, sizeof(void*));
-  
-  // Write the pointer value to the buffer in little-endian format
-  uint8_t* data = buffer.Data();
-  for (size_t i = 0; i < sizeof(void*); ++i) {
-    data[i] = static_cast<uint8_t>((ptrValue >> (i * 8)) & 0xFF);
-  }
-  
-  return buffer;
+  return PointerToBuffer(env, objcObj->objcObject);
 }
 
 Napi::Value FromPointer(const Napi::CallbackInfo &info) {
@@ -65,39 +55,25 @@ Napi::Value FromPointer(const Napi::CallbackInfo &info) {
     throw Napi::TypeError::New(env, "Expected a single Buffer or BigInt argument");
   }
   
-  uintptr_t ptrValue = 0;
+  void *ptr = nullptr;
   
   if (info[0].IsBuffer()) {
-    // Read pointer from Buffer
     Napi::Buffer<uint8_t> buffer = info[0].As<Napi::Buffer<uint8_t>>();
     if (buffer.Length() != sizeof(void*)) {
       throw Napi::TypeError::New(env, "Buffer must be exactly 8 bytes for a 64-bit pointer");
     }
-    
-    uint8_t* data = buffer.Data();
-    for (size_t i = 0; i < sizeof(void*); ++i) {
-      ptrValue |= (static_cast<uintptr_t>(data[i]) << (i * 8));
-    }
+    ptr = ReadPointerFromBuffer(buffer.Data());
   } else if (info[0].IsBigInt()) {
-    // Read pointer from BigInt
-    bool lossless = false;
-    uint64_t value = info[0].As<Napi::BigInt>().Uint64Value(&lossless);
-    if (!lossless) {
-      throw Napi::RangeError::New(env, "BigInt value out of range for pointer");
-    }
-    ptrValue = static_cast<uintptr_t>(value);
+    ptr = BigIntToPointer(env, info[0].As<Napi::BigInt>());
   } else {
     throw Napi::TypeError::New(env, "Expected a Buffer or BigInt argument");
   }
   
-  if (ptrValue == 0) {
+  if (ptr == nullptr) {
     return env.Null();
   }
   
-  // Convert the pointer value back to an Objective-C object pointer
-  id obj = reinterpret_cast<id>(ptrValue);
-  
-  return ObjcObject::NewInstance(env, obj);
+  return ObjcObject::NewInstance(env, reinterpret_cast<id>(ptr));
 }
 
 Napi::Object InitAll(Napi::Env env, Napi::Object exports) {
