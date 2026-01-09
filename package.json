@@ -7,6 +7,7 @@
     "darwin"
   ],
   "repository": "https://github.com/iamEvanYT/objc-js",
+  "homepage": "https://github.com/iamEvanYT/objc-js#readme",
   "author": "iamEvan",
   "imports": {
     "#nobjc_native": "./build/Release/nobjc_native.node"
@@ -39,7 +40,7 @@
     "format": "prettier --write \"**/*.{ts,js,json,md}\"",
     "preinstall-disabled": "npm run build-scripts && npm run make-clangd-config"
   },
-  "version": "0.0.15",
+  "version": "1.0.0",
   "description": "Objective-C bridge for Node.js",
   "main": "dist/index.js",
   "dependencies": {
