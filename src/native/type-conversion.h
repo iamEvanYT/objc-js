@@ -1,6 +1,31 @@
 #ifndef TYPE_CONVERSION_H
 #define TYPE_CONVERSION_H
 
+/**
+ * @file type-conversion.h
+ * @brief Type conversion utilities for nobjc.
+ *
+ * This header provides utilities for converting between JavaScript and
+ * Objective-C types. It includes:
+ *
+ * - Type Encoding Utilities:
+ *   - SimplifiedTypeEncoding: Class to strip type qualifiers from ObjC encodings
+ *   - SimplifyTypeEncoding(): Legacy function for the same purpose
+ *
+ * - ObjC to JS Conversion:
+ *   - ObjCToJS(): Convert ObjC value at pointer to JS value
+ *   - ExtractInvocationArgumentToJS(): Extract NSInvocation arg to JS
+ *   - GetInvocationReturnAsJS(): Get NSInvocation return value as JS
+ *
+ * - JS to ObjC Conversion:
+ *   - SetInvocationReturnFromJS(): Set NSInvocation return from JS value
+ *
+ * The conversion functions use a visitor pattern (via type-dispatch.h) to
+ * handle different type codes with minimal code duplication.
+ *
+ * @see type-dispatch.h for the underlying dispatch mechanism
+ */
+
 #include "ObjcObject.h"
 #include "type-dispatch.h"
 #include <Foundation/Foundation.h>

@@ -89,18 +89,15 @@ struct SubclassImplementation {
   bool isElectron;
 };
 
-// MARK: - Global Storage
+// MARK: - Global Storage (DEPRECATED - use ProtocolManager/SubclassManager instead)
+// These declarations are kept for backward compatibility during migration.
+// New code should use:
+//   - nobjc::ProtocolManager::Instance() for protocol implementations
+//   - nobjc::SubclassManager::Instance() for subclass implementations
 
-// Global map: instance pointer -> implementation details
-// This keeps JavaScript callbacks alive for the lifetime of the Objective-C
-// object
-extern std::unordered_map<void *, ProtocolImplementation> g_implementations;
-extern std::mutex g_implementations_mutex;
-
-// Global map: Class pointer -> subclass implementation details
-// This stores information about JS-defined subclasses
-extern std::unordered_map<void *, SubclassImplementation> g_subclasses;
-extern std::mutex g_subclasses_mutex;
+// Note: These extern declarations are removed as storage is now in the manager singletons.
+// If you need to access the storage, use the manager classes directly.
+// See protocol-manager.h and subclass-manager.h for the new APIs.
 
 // MARK: - Storage Access Helpers
 
@@ -113,29 +110,11 @@ inline void SignalInvocationComplete(InvocationData *data) {
   }
 }
 
-// Look up implementation for an instance pointer
-// Returns nullptr if not found
-// Caller must hold g_implementations_mutex
-inline ProtocolImplementation *
-FindImplementation(void *instancePtr) {
-  auto it = g_implementations.find(instancePtr);
-  if (it != g_implementations.end()) {
-    return &it->second;
-  }
-  return nullptr;
-}
+// DEPRECATED: Use nobjc::ProtocolManager::Instance().Find(instancePtr) instead
+// This function is no longer available as global storage has been moved to manager classes.
 
-// Look up subclass implementation for a Class pointer
-// Returns nullptr if not found
-// Caller must hold g_subclasses_mutex
-inline SubclassImplementation *
-FindSubclassImplementation(void *classPtr) {
-  auto it = g_subclasses.find(classPtr);
-  if (it != g_subclasses.end()) {
-    return &it->second;
-  }
-  return nullptr;
-}
+// DEPRECATED: Use nobjc::SubclassManager::Instance().Find(classPtr) instead
+// This function is no longer available as global storage has been moved to manager classes.
 
 #endif // PROTOCOL_STORAGE_H
 

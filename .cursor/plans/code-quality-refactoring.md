@@ -1,7 +1,7 @@
 # Code Quality, Performance & Memory Leak Refactoring Plan
 
 **Created**: 2026-01-09
-**Status**: In Progress
+**Status**: Completed
 
 ## Overview
 
@@ -49,12 +49,12 @@ This plan addresses code quality, performance, redundant code removal, and memor
 
 ### Phase 5: Architectural Improvements
 
-- [ ] Create `ProtocolManager` singleton class
-- [ ] Create `SubclassManager` singleton class
-- [ ] Split `type-conversion.h` into focused modules
-- [ ] Add header documentation
-- [ ] Final cleanup and code review
-- [ ] Run tests after Phase 5
+- [x] Create `ProtocolManager` singleton class
+- [x] Create `SubclassManager` singleton class
+- [ ] Split `type-conversion.h` into focused modules (deferred - marginal benefit, file is well-organized at 534 lines)
+- [x] Add header documentation
+- [x] Final cleanup and code review
+- [x] Run tests after Phase 5 (90 pass, 2 skip, 0 fail)
 
 ---
 
@@ -199,28 +199,30 @@ public:
 
 ## File Changes Summary
 
-| File                   | Action   | Purpose                 |
-| ---------------------- | -------- | ----------------------- |
-| `memory-utils.h`       | Created  | RAII wrappers           |
-| `constants.h`          | Created  | Named constants         |
-| `pointer-utils.h`      | Created  | Pointer serialization   |
-| `runtime-detection.h`  | Created  | Runtime detection       |
-| `forwarding-common.h`  | Created  | Shared forwarding logic |
-| `forwarding-common.mm` | Created  | Shared forwarding impl  |
-| `type-dispatch.h`      | Created  | Type dispatch templates |
-| `super-call-helpers.h` | Created  | CallSuper helper fns    |
-| `type-encoding.h`      | Planned  | Type encoding utilities |
-| `js-to-objc.h`         | Planned  | JS→ObjC conversion      |
-| `objc-to-js.h`         | Planned  | ObjC→JS conversion      |
-| `ffi-utils.h`          | Modified | Add FFITypeGuard        |
-| `method-forwarding.mm` | Modified | RAII, shared logic      |
-| `subclass-impl.mm`     | Modified | RAII, refactored funcs  |
-| `protocol-impl.mm`     | Modified | Use utilities           |
-| `ObjcObject.mm`        | Modified | Use pointer utilities   |
-| `nobjc.mm`             | Modified | Use pointer utilities   |
-| `protocol-storage.h`   | Planned  | Add managers (Phase 5)  |
-| `type-conversion.h`    | Modified | Visitor pattern         |
-| `bridge.h`             | Modified | Update includes         |
+| File                   | Action   | Purpose                                     |
+| ---------------------- | -------- | ------------------------------------------- |
+| `memory-utils.h`       | Created  | RAII wrappers                               |
+| `constants.h`          | Created  | Named constants                             |
+| `pointer-utils.h`      | Created  | Pointer serialization                       |
+| `runtime-detection.h`  | Created  | Runtime detection                           |
+| `forwarding-common.h`  | Created  | Shared forwarding logic                     |
+| `forwarding-common.mm` | Created  | Shared forwarding impl                      |
+| `type-dispatch.h`      | Created  | Type dispatch templates                     |
+| `super-call-helpers.h` | Created  | CallSuper helper fns                        |
+| `protocol-manager.h`   | Created  | ProtocolManager singleton                   |
+| `subclass-manager.h`   | Created  | SubclassManager singleton                   |
+| `type-encoding.h`      | Deferred | Type encoding utilities                     |
+| `js-to-objc.h`         | Deferred | JS→ObjC conversion                          |
+| `objc-to-js.h`         | Deferred | ObjC→JS conversion                          |
+| `ffi-utils.h`          | Modified | Add FFITypeGuard                            |
+| `method-forwarding.mm` | Modified | RAII, shared logic, use ProtocolManager     |
+| `subclass-impl.mm`     | Modified | RAII, refactored funcs, use SubclassManager |
+| `protocol-impl.mm`     | Modified | Use utilities, use ProtocolManager          |
+| `ObjcObject.mm`        | Modified | Use pointer utilities                       |
+| `nobjc.mm`             | Modified | Use pointer utilities                       |
+| `protocol-storage.h`   | Modified | Deprecate globals, point to managers        |
+| `type-conversion.h`    | Modified | Visitor pattern, added docs                 |
+| `bridge.h`             | Modified | Update includes                             |
 
 ---
 

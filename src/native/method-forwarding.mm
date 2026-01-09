@@ -3,8 +3,11 @@
 #include "forwarding-common.h"
 #include "memory-utils.h"
 #include "ObjcObject.h"
+#include "protocol-manager.h"
 #include "protocol-storage.h"
 #include "type-conversion.h"
+
+using nobjc::ProtocolManager;
 #include <CoreFoundation/CoreFoundation.h>
 #include <Foundation/Foundation.h>
 #include <napi.h>
@@ -174,19 +177,23 @@ BOOL RespondsToSelector(id self, SEL _cmd, SEL selector) {
   void *ptr = (__bridge void *)self;
 
   // Check if this is one of our implemented methods
-  {
-    std::lock_guard<std::mutex> lock(g_implementations_mutex);
-    auto it = g_implementations.find(ptr);
-    if (it != g_implementations.end()) {
+  bool found = ProtocolManager::Instance().WithLock([ptr, selector](auto& map) {
+    auto it = map.find(ptr);
+    if (it != map.end()) {
       NSString *selectorString = NSStringFromSelector(selector);
       if (selectorString != nil) {
         std::string selName = [selectorString UTF8String];
         auto callbackIt = it->second.callbacks.find(selName);
         if (callbackIt != it->second.callbacks.end()) {
-          return YES;
+          return true;
         }
       }
     }
+    return false;
+  });
+
+  if (found) {
+    return YES;
   }
 
   // For methods we don't implement, check if NSObject responds to them
@@ -198,15 +205,21 @@ BOOL RespondsToSelector(id self, SEL _cmd, SEL selector) {
 NSMethodSignature *MethodSignatureForSelector(id self, SEL _cmd, SEL selector) {
   void *ptr = (__bridge void *)self;
 
-  std::lock_guard<std::mutex> lock(g_implementations_mutex);
-  auto it = g_implementations.find(ptr);
-  if (it != g_implementations.end()) {
-    NSString *selectorString = NSStringFromSelector(selector);
-    std::string selName = [selectorString UTF8String];
-    auto encIt = it->second.typeEncodings.find(selName);
-    if (encIt != it->second.typeEncodings.end()) {
-      return [NSMethodSignature signatureWithObjCTypes:encIt->second.c_str()];
+  NSMethodSignature *sig = ProtocolManager::Instance().WithLock([ptr, selector](auto& map) -> NSMethodSignature* {
+    auto it = map.find(ptr);
+    if (it != map.end()) {
+      NSString *selectorString = NSStringFromSelector(selector);
+      std::string selName = [selectorString UTF8String];
+      auto encIt = it->second.typeEncodings.find(selName);
+      if (encIt != it->second.typeEncodings.end()) {
+        return [NSMethodSignature signatureWithObjCTypes:encIt->second.c_str()];
+      }
     }
+    return nil;
+  });
+  
+  if (sig != nil) {
+    return sig;
   }
   // Fall back to superclass for methods we don't implement
   return [NSObject instanceMethodSignatureForSelector:selector];
@@ -241,87 +254,90 @@ void ForwardInvocation(id self, SEL _cmd, NSInvocation *invocation) {
   // Lookup context and acquire TSFN
   callbacks.lookupContext = [](void *lookupKey,
                                const std::string &selName) -> std::optional<ForwardingContext> {
-    std::lock_guard<std::mutex> lock(g_implementations_mutex);
-    auto it = g_implementations.find(lookupKey);
-    if (it == g_implementations.end()) {
-      NOBJC_WARN("Protocol implementation not found for instance %p", lookupKey);
-      return std::nullopt;
-    }
+    return ProtocolManager::Instance().WithLock([lookupKey, &selName](auto& map) -> std::optional<ForwardingContext> {
+      auto it = map.find(lookupKey);
+      if (it == map.end()) {
+        NOBJC_WARN("Protocol implementation not found for instance %p", lookupKey);
+        return std::nullopt;
+      }
 
-    auto callbackIt = it->second.callbacks.find(selName);
-    if (callbackIt == it->second.callbacks.end()) {
-      NOBJC_WARN("Callback not found for selector %s", selName.c_str());
-      return std::nullopt;
-    }
+      auto callbackIt = it->second.callbacks.find(selName);
+      if (callbackIt == it->second.callbacks.end()) {
+        NOBJC_WARN("Callback not found for selector %s", selName.c_str());
+        return std::nullopt;
+      }
 
-    // Acquire the TSFN
-    Napi::ThreadSafeFunction tsfn = callbackIt->second;
-    napi_status acq_status = tsfn.Acquire();
-    if (acq_status != napi_ok) {
-      NOBJC_WARN("Failed to acquire ThreadSafeFunction for selector %s", selName.c_str());
-      return std::nullopt;
-    }
+      // Acquire the TSFN
+      Napi::ThreadSafeFunction tsfn = callbackIt->second;
+      napi_status acq_status = tsfn.Acquire();
+      if (acq_status != napi_ok) {
+        NOBJC_WARN("Failed to acquire ThreadSafeFunction for selector %s", selName.c_str());
+        return std::nullopt;
+      }
 
-    ForwardingContext ctx;
-    ctx.tsfn = tsfn;
-    ctx.js_thread = it->second.js_thread;
-    ctx.env = it->second.env;
-    ctx.skipDirectCallForElectron = it->second.isElectron;
-    ctx.instancePtr = nullptr;   // Not used for protocols
-    ctx.superClassPtr = nullptr; // Not used for protocols
+      ForwardingContext ctx;
+      ctx.tsfn = tsfn;
+      ctx.js_thread = it->second.js_thread;
+      ctx.env = it->second.env;
+      ctx.skipDirectCallForElectron = it->second.isElectron;
+      ctx.instancePtr = nullptr;   // Not used for protocols
+      ctx.superClassPtr = nullptr; // Not used for protocols
 
-    // Cache the JS callback reference to avoid mutex re-acquisition
-    auto jsCallbackIt = it->second.jsCallbacks.find(selName);
-    if (jsCallbackIt != it->second.jsCallbacks.end()) {
-      ctx.cachedJsCallback = &jsCallbackIt->second;
-    }
+      // Cache the JS callback reference to avoid mutex re-acquisition
+      auto jsCallbackIt = it->second.jsCallbacks.find(selName);
+      if (jsCallbackIt != it->second.jsCallbacks.end()) {
+        ctx.cachedJsCallback = &jsCallbackIt->second;
+      }
 
-    auto encIt = it->second.typeEncodings.find(selName);
-    if (encIt != it->second.typeEncodings.end()) {
-      ctx.typeEncoding = encIt->second;
-    }
+      auto encIt = it->second.typeEncodings.find(selName);
+      if (encIt != it->second.typeEncodings.end()) {
+        ctx.typeEncoding = encIt->second;
+      }
 
-    return ctx;
+      return ctx;
+    });
   };
 
   // Get JS function for direct call path
   callbacks.getJSFunction = [](void *lookupKey, const std::string &selName,
-                               Napi::Env env) -> Napi::Function {
-    std::lock_guard<std::mutex> lock(g_implementations_mutex);
-    auto it = g_implementations.find(lookupKey);
-    if (it == g_implementations.end()) {
-      return Napi::Function();
-    }
+                               Napi::Env /*env*/) -> Napi::Function {
+    return ProtocolManager::Instance().WithLock([lookupKey, &selName](auto& map) -> Napi::Function {
+      auto it = map.find(lookupKey);
+      if (it == map.end()) {
+        return Napi::Function();
+      }
 
-    auto jsCallbackIt = it->second.jsCallbacks.find(selName);
-    if (jsCallbackIt == it->second.jsCallbacks.end()) {
-      return Napi::Function();
-    }
+      auto jsCallbackIt = it->second.jsCallbacks.find(selName);
+      if (jsCallbackIt == it->second.jsCallbacks.end()) {
+        return Napi::Function();
+      }
 
-    return jsCallbackIt->second.Value();
+      return jsCallbackIt->second.Value();
+    });
   };
 
   // Re-acquire TSFN for fallback path
   callbacks.reacquireTSFN = [](void *lookupKey,
                                const std::string &selName) -> std::optional<Napi::ThreadSafeFunction> {
-    std::lock_guard<std::mutex> lock(g_implementations_mutex);
-    auto it = g_implementations.find(lookupKey);
-    if (it == g_implementations.end()) {
-      return std::nullopt;
-    }
+    return ProtocolManager::Instance().WithLock([lookupKey, &selName](auto& map) -> std::optional<Napi::ThreadSafeFunction> {
+      auto it = map.find(lookupKey);
+      if (it == map.end()) {
+        return std::nullopt;
+      }
 
-    auto callbackIt = it->second.callbacks.find(selName);
-    if (callbackIt == it->second.callbacks.end()) {
-      return std::nullopt;
-    }
+      auto callbackIt = it->second.callbacks.find(selName);
+      if (callbackIt == it->second.callbacks.end()) {
+        return std::nullopt;
+      }
 
-    Napi::ThreadSafeFunction tsfn = callbackIt->second;
-    napi_status acq_status = tsfn.Acquire();
-    if (acq_status != napi_ok) {
-      return std::nullopt;
-    }
+      Napi::ThreadSafeFunction tsfn = callbackIt->second;
+      napi_status acq_status = tsfn.Acquire();
+      if (acq_status != napi_ok) {
+        return std::nullopt;
+      }
 
-    return tsfn;
+      return tsfn;
+    });
   };
 
   ForwardInvocationCommon(invocation, selectorName, ptr, callbacks);
@@ -330,27 +346,28 @@ void ForwardInvocation(id self, SEL _cmd, NSInvocation *invocation) {
 // Deallocation implementation
 void DeallocImplementation(id self, SEL _cmd) {
   @autoreleasepool {
-    // Remove the implementation from the global map
-    std::lock_guard<std::mutex> lock(g_implementations_mutex);
+    // Remove the implementation from the manager
     void *ptr = (__bridge void *)self;
-    auto it = g_implementations.find(ptr);
-    if (it != g_implementations.end()) {
-      // Release all ThreadSafeFunctions and JS callbacks
-      // Do this carefully to avoid issues during shutdown
-      try {
-        for (auto &pair : it->second.callbacks) {
-          // Release the ThreadSafeFunction
-          pair.second.Release();
+    ProtocolManager::Instance().WithLock([ptr, self](auto& map) {
+      auto it = map.find(ptr);
+      if (it != map.end()) {
+        // Release all ThreadSafeFunctions and JS callbacks
+        // Do this carefully to avoid issues during shutdown
+        try {
+          for (auto &pair : it->second.callbacks) {
+            // Release the ThreadSafeFunction
+            pair.second.Release();
+          }
+          it->second.callbacks.clear();
+          it->second.jsCallbacks.clear();
+          it->second.typeEncodings.clear();
+        } catch (...) {
+          // Ignore errors during cleanup
+          NOBJC_WARN("Exception during callback cleanup for instance %p", self);
         }
-        it->second.callbacks.clear();
-        it->second.jsCallbacks.clear();
-        it->second.typeEncodings.clear();
-      } catch (...) {
-        // Ignore errors during cleanup
-        NOBJC_WARN("Exception during callback cleanup for instance %p", self);
+        map.erase(it);
       }
-      g_implementations.erase(it);
-    }
+    });
   }
 
   // Call the superclass dealloc

@@ -9,6 +9,7 @@
 #include "ObjcObject.h"
 #include "protocol-storage.h"
 #include "runtime-detection.h"
+#include "subclass-manager.h"
 #include "super-call-helpers.h"
 #include "type-conversion.h"
 #include <Foundation/Foundation.h>
@@ -26,10 +27,7 @@
 // objc_msgSendSuper2 isn't in the headers but is exported
 extern "C" id objc_msgSendSuper2(struct objc_super *super, SEL op, ...);
 
-// MARK: - Global Storage Definition
-
-std::unordered_map<void *, SubclassImplementation> g_subclasses;
-std::mutex g_subclasses_mutex;
+using nobjc::SubclassManager;
 
 // MARK: - Forward Declarations for Method Forwarding
 
@@ -46,19 +44,23 @@ static BOOL SubclassRespondsToSelector(id self, SEL _cmd, SEL selector) {
   Class cls = object_getClass(self);
   void *clsPtr = (__bridge void *)cls;
 
-  {
-    std::lock_guard<std::mutex> lock(g_subclasses_mutex);
-    auto it = g_subclasses.find(clsPtr);
-    if (it != g_subclasses.end()) {
+  bool found = SubclassManager::Instance().WithLock([clsPtr, selector](auto& map) {
+    auto it = map.find(clsPtr);
+    if (it != map.end()) {
       NSString *selectorString = NSStringFromSelector(selector);
       if (selectorString != nil) {
         std::string selName = [selectorString UTF8String];
         auto methodIt = it->second.methods.find(selName);
         if (methodIt != it->second.methods.end()) {
-          return YES;
+          return true;
         }
       }
     }
+    return false;
+  });
+
+  if (found) {
+    return YES;
   }
 
   // Check superclass
@@ -74,10 +76,9 @@ static NSMethodSignature *SubclassMethodSignatureForSelector(id self, SEL _cmd,
   Class cls = object_getClass(self);
   void *clsPtr = (__bridge void *)cls;
 
-  {
-    std::lock_guard<std::mutex> lock(g_subclasses_mutex);
-    auto it = g_subclasses.find(clsPtr);
-    if (it != g_subclasses.end()) {
+  NSMethodSignature *sig = SubclassManager::Instance().WithLock([clsPtr, selector](auto& map) -> NSMethodSignature* {
+    auto it = map.find(clsPtr);
+    if (it != map.end()) {
       NSString *selectorString = NSStringFromSelector(selector);
       std::string selName = [selectorString UTF8String];
       auto methodIt = it->second.methods.find(selName);
@@ -86,6 +87,11 @@ static NSMethodSignature *SubclassMethodSignatureForSelector(id self, SEL _cmd,
             signatureWithObjCTypes:methodIt->second.typeEncoding.c_str()];
       }
     }
+    return nil;
+  });
+
+  if (sig != nil) {
+    return sig;
   }
 
   // Fall back to superclass
@@ -133,80 +139,83 @@ static void SubclassForwardInvocation(id self, SEL _cmd,
   // Lookup context and acquire TSFN
   callbacks.lookupContext = [capturedSelfPtr](void *lookupKey,
                                const std::string &selName) -> std::optional<ForwardingContext> {
-    std::lock_guard<std::mutex> lock(g_subclasses_mutex);
-    auto it = g_subclasses.find(lookupKey);
-    if (it == g_subclasses.end()) {
-      NOBJC_WARN("Subclass implementation not found for class %p", lookupKey);
-      return std::nullopt;
-    }
+    return SubclassManager::Instance().WithLock([lookupKey, &selName, capturedSelfPtr](auto& map) -> std::optional<ForwardingContext> {
+      auto it = map.find(lookupKey);
+      if (it == map.end()) {
+        NOBJC_WARN("Subclass implementation not found for class %p", lookupKey);
+        return std::nullopt;
+      }
 
-    auto methodIt = it->second.methods.find(selName);
-    if (methodIt == it->second.methods.end()) {
-      NOBJC_WARN("Method not found for selector %s", selName.c_str());
-      return std::nullopt;
-    }
+      auto methodIt = it->second.methods.find(selName);
+      if (methodIt == it->second.methods.end()) {
+        NOBJC_WARN("Method not found for selector %s", selName.c_str());
+        return std::nullopt;
+      }
 
-    // Acquire the TSFN
-    Napi::ThreadSafeFunction tsfn = methodIt->second.callback;
-    napi_status acq_status = tsfn.Acquire();
-    if (acq_status != napi_ok) {
-      NOBJC_WARN("Failed to acquire ThreadSafeFunction for selector %s", selName.c_str());
-      return std::nullopt;
-    }
+      // Acquire the TSFN
+      Napi::ThreadSafeFunction tsfn = methodIt->second.callback;
+      napi_status acq_status = tsfn.Acquire();
+      if (acq_status != napi_ok) {
+        NOBJC_WARN("Failed to acquire ThreadSafeFunction for selector %s", selName.c_str());
+        return std::nullopt;
+      }
 
-    ForwardingContext ctx;
-    ctx.tsfn = tsfn;
-    ctx.typeEncoding = methodIt->second.typeEncoding;
-    ctx.js_thread = it->second.js_thread;
-    ctx.env = it->second.env;
-    ctx.skipDirectCallForElectron = false; // Subclass always tries direct call
-    ctx.instancePtr = capturedSelfPtr;
-    ctx.superClassPtr = it->second.superClass;
-    
-    // Cache the JS callback reference to avoid mutex re-acquisition
-    ctx.cachedJsCallback = &methodIt->second.jsCallback;
+      ForwardingContext ctx;
+      ctx.tsfn = tsfn;
+      ctx.typeEncoding = methodIt->second.typeEncoding;
+      ctx.js_thread = it->second.js_thread;
+      ctx.env = it->second.env;
+      ctx.skipDirectCallForElectron = false; // Subclass always tries direct call
+      ctx.instancePtr = capturedSelfPtr;
+      ctx.superClassPtr = it->second.superClass;
+      
+      // Cache the JS callback reference to avoid mutex re-acquisition
+      ctx.cachedJsCallback = &methodIt->second.jsCallback;
 
-    return ctx;
+      return ctx;
+    });
   };
 
   // Get JS function for direct call path
   callbacks.getJSFunction = [](void *lookupKey, const std::string &selName,
-                               Napi::Env env) -> Napi::Function {
-    std::lock_guard<std::mutex> lock(g_subclasses_mutex);
-    auto it = g_subclasses.find(lookupKey);
-    if (it == g_subclasses.end()) {
-      return Napi::Function();
-    }
+                               Napi::Env /*env*/) -> Napi::Function {
+    return SubclassManager::Instance().WithLock([lookupKey, &selName](auto& map) -> Napi::Function {
+      auto it = map.find(lookupKey);
+      if (it == map.end()) {
+        return Napi::Function();
+      }
 
-    auto methodIt = it->second.methods.find(selName);
-    if (methodIt == it->second.methods.end()) {
-      return Napi::Function();
-    }
+      auto methodIt = it->second.methods.find(selName);
+      if (methodIt == it->second.methods.end()) {
+        return Napi::Function();
+      }
 
-    return methodIt->second.jsCallback.Value();
+      return methodIt->second.jsCallback.Value();
+    });
   };
 
   // Re-acquire TSFN for fallback path
   callbacks.reacquireTSFN = [](void *lookupKey,
                                const std::string &selName) -> std::optional<Napi::ThreadSafeFunction> {
-    std::lock_guard<std::mutex> lock(g_subclasses_mutex);
-    auto it = g_subclasses.find(lookupKey);
-    if (it == g_subclasses.end()) {
-      return std::nullopt;
-    }
+    return SubclassManager::Instance().WithLock([lookupKey, &selName](auto& map) -> std::optional<Napi::ThreadSafeFunction> {
+      auto it = map.find(lookupKey);
+      if (it == map.end()) {
+        return std::nullopt;
+      }
 
-    auto methodIt = it->second.methods.find(selName);
-    if (methodIt == it->second.methods.end()) {
-      return std::nullopt;
-    }
+      auto methodIt = it->second.methods.find(selName);
+      if (methodIt == it->second.methods.end()) {
+        return std::nullopt;
+      }
 
-    Napi::ThreadSafeFunction tsfn = methodIt->second.callback;
-    napi_status acq_status = tsfn.Acquire();
-    if (acq_status != napi_ok) {
-      return std::nullopt;
-    }
+      Napi::ThreadSafeFunction tsfn = methodIt->second.callback;
+      napi_status acq_status = tsfn.Acquire();
+      if (acq_status != napi_ok) {
+        return std::nullopt;
+      }
 
-    return tsfn;
+      return tsfn;
+    });
   };
 
   ForwardInvocationCommon(invocation, selectorName, clsPtr, callbacks);
@@ -393,12 +402,9 @@ Napi::Value DefineClass(const Napi::CallbackInfo &info) {
   // Register the class
   objc_registerClassPair(newClass);
 
-  // Store in global map
+  // Store in manager
   void *classPtr = (__bridge void *)newClass;
-  {
-    std::lock_guard<std::mutex> lock(g_subclasses_mutex);
-    g_subclasses.emplace(classPtr, std::move(impl));
-  }
+  SubclassManager::Instance().Register(classPtr, std::move(impl));
 
   // Return the Class object
   return ObjcObject::NewInstance(env, newClass);
@@ -490,29 +496,32 @@ static Napi::Value CallSuperWithFFI(
 /// Find superclass from the subclass registry or fall back to direct superclass.
 static Class FindSuperClass(id self) {
   Class instanceClass = object_getClass(self);
-  Class superClass = nil;
   
   NOBJC_LOG("FindSuperClass: instanceClass=%s", class_getName(instanceClass));
   
-  {
-    std::lock_guard<std::mutex> lock(g_subclasses_mutex);
-    // Walk up the class hierarchy to find our subclass implementation
-    Class cls = instanceClass;
-    while (cls != nil) {
-      void *clsPtr = (__bridge void *)cls;
-      auto it = g_subclasses.find(clsPtr);
-      if (it != g_subclasses.end()) {
-        superClass = (__bridge Class)it->second.superClass;
-        NOBJC_LOG("FindSuperClass: Found superclass from registry: %s", 
-                  class_getName(superClass));
-        return superClass;
+  // Walk up the class hierarchy to find our subclass implementation
+  Class cls = instanceClass;
+  while (cls != nil) {
+    void *clsPtr = (__bridge void *)cls;
+    
+    Class superClass = SubclassManager::Instance().WithLock([clsPtr](auto& map) -> Class {
+      auto it = map.find(clsPtr);
+      if (it != map.end()) {
+        return (__bridge Class)it->second.superClass;
       }
-      cls = class_getSuperclass(cls);
+      return nil;
+    });
+    
+    if (superClass != nil) {
+      NOBJC_LOG("FindSuperClass: Found superclass from registry: %s", 
+                class_getName(superClass));
+      return superClass;
     }
+    cls = class_getSuperclass(cls);
   }
   
   // Fall back to direct superclass
-  superClass = class_getSuperclass(instanceClass);
+  Class superClass = class_getSuperclass(instanceClass);
   NOBJC_LOG("FindSuperClass: Using direct superclass: %s", 
             superClass ? class_getName(superClass) : "nil");
   return superClass;

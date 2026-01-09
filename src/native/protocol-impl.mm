@@ -2,6 +2,7 @@
 #include "debug.h"
 #include "method-forwarding.h"
 #include "ObjcObject.h"
+#include "protocol-manager.h"
 #include "protocol-storage.h"
 #include "runtime-detection.h"
 #include "type-conversion.h"
@@ -12,10 +13,7 @@
 #include <objc/runtime.h>
 #include <sstream>
 
-// MARK: - Global Storage Definition
-
-std::unordered_map<void *, ProtocolImplementation> g_implementations;
-std::mutex g_implementations_mutex;
+using nobjc::ProtocolManager;
 
 // MARK: - Helper Functions
 
@@ -255,12 +253,9 @@ Napi::Value CreateProtocolImplementation(const Napi::CallbackInfo &info) {
     throw Napi::Error::New(env, "Failed to instantiate class");
   }
 
-  // Store the implementation in the global map
+  // Store the implementation in the manager
   void *instancePtr = (__bridge void *)instance;
-  {
-    std::lock_guard<std::mutex> lock(g_implementations_mutex);
-    g_implementations.emplace(instancePtr, std::move(impl));
-  }
+  ProtocolManager::Instance().Register(instancePtr, std::move(impl));
 
   // Return wrapped object
   return ObjcObject::NewInstance(env, instance);
