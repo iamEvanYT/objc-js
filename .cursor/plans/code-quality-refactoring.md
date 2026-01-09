@@ -40,12 +40,12 @@ This plan addresses code quality, performance, redundant code removal, and memor
 
 ### Phase 4: Code Quality Improvements
 
-- [ ] Create `constants.h` with named constants
-- [ ] Break up `CallSuperWithFFI` (275 lines)
-- [ ] Break up `CallSuper` (214 lines)
-- [ ] Reduce nesting depth across codebase
-- [ ] Standardize error handling patterns
-- [ ] Run tests after Phase 4
+- [x] Create `constants.h` with named constants
+- [x] Break up `CallSuperWithFFI` (275 lines → ~75 lines + helpers)
+- [x] Break up `CallSuper` (214 lines → ~60 lines + helpers)
+- [ ] Reduce nesting depth across codebase (deferred - code is reasonably clean)
+- [ ] Standardize error handling patterns (deferred - RAII approach already in use)
+- [x] Run tests after Phase 4 (90 pass, 2 skip, 0 fail)
 
 ### Phase 5: Architectural Improvements
 
@@ -199,24 +199,28 @@ public:
 
 ## File Changes Summary
 
-| File                   | Action       | Purpose                 |
-| ---------------------- | ------------ | ----------------------- |
-| `memory-utils.h`       | Create       | RAII wrappers           |
-| `constants.h`          | Create       | Named constants         |
-| `pointer-utils.h`      | Create       | Pointer serialization   |
-| `runtime-detection.h`  | Create       | Runtime detection       |
-| `type-encoding.h`      | Create       | Type encoding utilities |
-| `js-to-objc.h`         | Create       | JS→ObjC conversion      |
-| `objc-to-js.h`         | Create       | ObjC→JS conversion      |
-| `ffi-utils.h`          | Modify       | Add FFITypeGuard        |
-| `method-forwarding.mm` | Modify       | RAII, shared logic      |
-| `subclass-impl.mm`     | Modify       | RAII, shared logic      |
-| `protocol-impl.mm`     | Modify       | Use utilities           |
-| `ObjcObject.mm`        | Modify       | Use pointer utilities   |
-| `nobjc.mm`             | Modify       | Use pointer utilities   |
-| `protocol-storage.h`   | Modify       | Add managers            |
-| `type-conversion.h`    | Modify/Split | Refactor                |
-| `bridge.h`             | Modify       | Update includes         |
+| File                   | Action   | Purpose                 |
+| ---------------------- | -------- | ----------------------- |
+| `memory-utils.h`       | Created  | RAII wrappers           |
+| `constants.h`          | Created  | Named constants         |
+| `pointer-utils.h`      | Created  | Pointer serialization   |
+| `runtime-detection.h`  | Created  | Runtime detection       |
+| `forwarding-common.h`  | Created  | Shared forwarding logic |
+| `forwarding-common.mm` | Created  | Shared forwarding impl  |
+| `type-dispatch.h`      | Created  | Type dispatch templates |
+| `super-call-helpers.h` | Created  | CallSuper helper fns    |
+| `type-encoding.h`      | Planned  | Type encoding utilities |
+| `js-to-objc.h`         | Planned  | JS→ObjC conversion      |
+| `objc-to-js.h`         | Planned  | ObjC→JS conversion      |
+| `ffi-utils.h`          | Modified | Add FFITypeGuard        |
+| `method-forwarding.mm` | Modified | RAII, shared logic      |
+| `subclass-impl.mm`     | Modified | RAII, refactored funcs  |
+| `protocol-impl.mm`     | Modified | Use utilities           |
+| `ObjcObject.mm`        | Modified | Use pointer utilities   |
+| `nobjc.mm`             | Modified | Use pointer utilities   |
+| `protocol-storage.h`   | Planned  | Add managers (Phase 5)  |
+| `type-conversion.h`    | Modified | Visitor pattern         |
+| `bridge.h`             | Modified | Update includes         |
 
 ---
 

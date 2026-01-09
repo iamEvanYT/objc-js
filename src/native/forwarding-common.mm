@@ -1,4 +1,5 @@
 #include "forwarding-common.h"
+#include "constants.h"
 #include "debug.h"
 #include "method-forwarding.h"
 #include <Foundation/Foundation.h>
@@ -131,7 +132,6 @@ void ForwardInvocationCommon(NSInvocation *invocation,
     }
 
     // Wait for callback by pumping CFRunLoop
-    CFTimeInterval timeout = 0.001; // 1ms per iteration
     int iterations = 0;
 
     while (true) {
@@ -142,11 +142,11 @@ void ForwardInvocationCommon(NSInvocation *invocation,
         }
       }
       iterations++;
-      if (iterations % 1000 == 0) {
+      if (iterations % nobjc::kRunLoopDebugLogInterval == 0) {
         NOBJC_LOG("ForwardInvocationCommon: Still waiting... (%d iterations)",
                   iterations);
       }
-      CFRunLoopRunInMode(kCFRunLoopDefaultMode, timeout, true);
+      CFRunLoopRunInMode(kCFRunLoopDefaultMode, nobjc::kRunLoopPumpInterval, true);
     }
     // Data cleaned up in callback
   }
