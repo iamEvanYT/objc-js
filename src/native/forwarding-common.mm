@@ -57,9 +57,17 @@ void ForwardInvocationCommon(NSInvocation *invocation,
       Napi::Env callEnv(ctx.env);
       Napi::HandleScope scope(callEnv);
 
-      // Get the JS function within the HandleScope
-      Napi::Function jsFn =
-          callbacks.getJSFunction(lookupKey, selectorName, callEnv);
+      // Use cached JS function reference (avoids re-acquiring mutex)
+      Napi::Function jsFn;
+      if (ctx.cachedJsCallback && !ctx.cachedJsCallback->IsEmpty()) {
+        jsFn = ctx.cachedJsCallback->Value();
+      }
+      
+      // Fallback to callback lookup if cache miss (shouldn't happen)
+      if (jsFn.IsEmpty()) {
+        jsFn = callbacks.getJSFunction(lookupKey, selectorName, callEnv);
+      }
+      
       if (jsFn.IsEmpty()) {
         NOBJC_WARN("JS function not found for selector %s (direct path)",
                    selectorName.c_str());

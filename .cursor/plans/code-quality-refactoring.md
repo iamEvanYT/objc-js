@@ -31,12 +31,12 @@ This plan addresses code quality, performance, redundant code removal, and memor
 
 ### Phase 3: Performance Optimizations
 
-- [ ] Reduce mutex contention in `SubclassForwardInvocation`
-- [ ] Reduce mutex contention in `ForwardInvocation`
-- [ ] Cache selector strings in `InvocationData`
-- [ ] Optimize `SimplifyTypeEncoding` parser
-- [ ] Replace repeated map lookups with iterators
-- [ ] Run tests after Phase 3
+- [x] Reduce mutex contention in `SubclassForwardInvocation`
+- [x] Reduce mutex contention in `ForwardInvocation`
+- [x] Cache selector strings in `InvocationData`
+- [x] Optimize `SimplifyTypeEncoding` parser
+- [x] Replace repeated map lookups with iterators
+- [x] Run tests after Phase 3 (90 pass, 2 skip, 0 fail)
 
 ### Phase 4: Code Quality Improvements
 

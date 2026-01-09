@@ -11,51 +11,52 @@
 // MARK: - Type Encoding Utilities
 
 // Helper class to manage the lifetime of simplified type encodings
+// Optimized to use pointer offset instead of string::erase()
 class SimplifiedTypeEncoding {
 private:
-  std::string simplified;
+  const char* original;
+  size_t offset;  // Offset past any leading qualifiers
+
+  // Check if a character is a type qualifier
+  static bool IsQualifier(char c) {
+    // r=const, n=in, N=inout, o=out, O=bycopy, R=byref, V=oneway
+    return c == 'r' || c == 'n' || c == 'N' || c == 'o' ||
+           c == 'O' || c == 'R' || c == 'V';
+  }
 
 public:
-  SimplifiedTypeEncoding(const char *typeEncoding) : simplified(typeEncoding) {
-    // Remove any leading qualifiers (r=const, n=in, N=inout, o=out, O=bycopy,
-    // R=byref, V=oneway)
-    while (!simplified.empty() &&
-           (simplified[0] == 'r' || simplified[0] == 'n' ||
-            simplified[0] == 'N' || simplified[0] == 'o' ||
-            simplified[0] == 'O' || simplified[0] == 'R' ||
-            simplified[0] == 'V')) {
-      simplified.erase(0, 1);
+  SimplifiedTypeEncoding(const char *typeEncoding) 
+      : original(typeEncoding), offset(0) {
+    // Skip leading qualifiers using pointer arithmetic (O(k) where k = qualifier count)
+    if (original) {
+      while (original[offset] != '\0' && IsQualifier(original[offset])) {
+        ++offset;
+      }
     }
   }
 
-  const char *c_str() const { return simplified.c_str(); }
-  char operator[](size_t index) const { return simplified[index]; }
-  operator const char *() const { return simplified.c_str(); }
+  const char *c_str() const { return original ? original + offset : ""; }
+  char operator[](size_t index) const { 
+    return original ? original[offset + index] : '\0'; 
+  }
+  operator const char *() const { return c_str(); }
+  
+  // Check if empty (after stripping qualifiers)
+  bool empty() const { return !original || original[offset] == '\0'; }
 };
 
 // Legacy function for compatibility - returns pointer to internal string
-// WARNING: The returned pointer is only valid as long as the typeEncoding
-// parameter is valid
+// Optimized to use pointer arithmetic instead of string mutations
 inline const char *SimplifyTypeEncoding(const char *typeEncoding) {
-  // For simple cases where there are no qualifiers, return the original pointer
-  if (typeEncoding && typeEncoding[0] != 'r' && typeEncoding[0] != 'n' &&
-      typeEncoding[0] != 'N' && typeEncoding[0] != 'o' &&
-      typeEncoding[0] != 'O' && typeEncoding[0] != 'R' &&
-      typeEncoding[0] != 'V') {
-    return typeEncoding;
+  if (!typeEncoding) return "";
+  
+  // Skip leading qualifiers using pointer arithmetic
+  const char* ptr = typeEncoding;
+  while (*ptr == 'r' || *ptr == 'n' || *ptr == 'N' || *ptr == 'o' ||
+         *ptr == 'O' || *ptr == 'R' || *ptr == 'V') {
+    ++ptr;
   }
-
-  // For complex cases, we need to skip qualifiers
-  // This is a temporary fix - callers should use SimplifiedTypeEncoding class
-  static thread_local std::string buffer;
-  buffer = typeEncoding;
-  while (!buffer.empty() &&
-         (buffer[0] == 'r' || buffer[0] == 'n' || buffer[0] == 'N' ||
-          buffer[0] == 'o' || buffer[0] == 'O' || buffer[0] == 'R' ||
-          buffer[0] == 'V')) {
-    buffer.erase(0, 1);
-  }
-  return buffer.c_str();
+  return ptr;
 }
 
 // MARK: - ObjC to JS Conversion

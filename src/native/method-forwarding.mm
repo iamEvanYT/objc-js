@@ -270,6 +270,12 @@ void ForwardInvocation(id self, SEL _cmd, NSInvocation *invocation) {
     ctx.instancePtr = nullptr;   // Not used for protocols
     ctx.superClassPtr = nullptr; // Not used for protocols
 
+    // Cache the JS callback reference to avoid mutex re-acquisition
+    auto jsCallbackIt = it->second.jsCallbacks.find(selName);
+    if (jsCallbackIt != it->second.jsCallbacks.end()) {
+      ctx.cachedJsCallback = &jsCallbackIt->second;
+    }
+
     auto encIt = it->second.typeEncodings.find(selName);
     if (encIt != it->second.typeEncodings.end()) {
       ctx.typeEncoding = encIt->second;

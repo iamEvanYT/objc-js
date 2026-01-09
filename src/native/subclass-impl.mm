@@ -160,6 +160,9 @@ static void SubclassForwardInvocation(id self, SEL _cmd,
     ctx.skipDirectCallForElectron = false; // Subclass always tries direct call
     ctx.instancePtr = capturedSelfPtr;
     ctx.superClassPtr = it->second.superClass;
+    
+    // Cache the JS callback reference to avoid mutex re-acquisition
+    ctx.cachedJsCallback = &methodIt->second.jsCallback;
 
     return ctx;
   };

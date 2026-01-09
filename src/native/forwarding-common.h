@@ -18,6 +18,9 @@ typedef struct NSInvocation NSInvocation;
 /**
  * Context data gathered during the initial lookup phase.
  * This contains everything needed to perform the invocation.
+ * 
+ * Performance optimization: We cache the JS function reference here
+ * so that getJSFunction doesn't need to re-acquire the mutex.
  */
 struct ForwardingContext {
   Napi::ThreadSafeFunction tsfn;
@@ -29,10 +32,15 @@ struct ForwardingContext {
   // Subclass-specific (set to nullptr/0 for protocols)
   void *instancePtr;
   void *superClassPtr;
+  
+  // Cached JS function reference (avoids re-acquiring mutex in getJSFunction)
+  // This is a raw pointer to the FunctionReference stored in the global map.
+  // It remains valid as long as the implementation exists.
+  Napi::FunctionReference* cachedJsCallback;
 
   ForwardingContext()
       : js_thread(0), env(nullptr), skipDirectCallForElectron(false),
-        instancePtr(nullptr), superClassPtr(nullptr) {}
+        instancePtr(nullptr), superClassPtr(nullptr), cachedJsCallback(nullptr) {}
 };
 
 /**
