@@ -2,6 +2,7 @@
 #define TYPE_CONVERSION_H
 
 #include "ObjcObject.h"
+#include "type-dispatch.h"
 #include <Foundation/Foundation.h>
 #include <napi.h>
 #include <objc/runtime.h>
@@ -59,180 +60,115 @@ inline const char *SimplifyTypeEncoding(const char *typeEncoding) {
 
 // MARK: - ObjC to JS Conversion
 
-// Convert an Objective-C value (from a pointer) to a JavaScript value
-inline Napi::Value ObjCToJS(Napi::Env env, void *valuePtr, char typeCode) {
-  switch (typeCode) {
-  case 'c': {
-    char value = *(char *)valuePtr;
-    return Napi::Number::New(env, value);
+// Visitor for converting ObjC values to JS
+struct ObjCToJSVisitor {
+  Napi::Env env;
+  void* valuePtr;
+
+  // Numeric types -> Number (or Boolean for bool)
+  template <typename T>
+  auto operator()(std::type_identity<T>) const 
+      -> std::enable_if_t<is_numeric_v<T> && !std::is_same_v<T, bool>, Napi::Value> {
+    T value = *static_cast<T*>(valuePtr);
+    return Napi::Number::New(env, static_cast<double>(value));
   }
-  case 'i': {
-    int value = *(int *)valuePtr;
-    return Napi::Number::New(env, value);
-  }
-  case 's': {
-    short value = *(short *)valuePtr;
-    return Napi::Number::New(env, value);
-  }
-  case 'l': {
-    long value = *(long *)valuePtr;
-    return Napi::Number::New(env, value);
-  }
-  case 'q': {
-    long long value = *(long long *)valuePtr;
-    return Napi::Number::New(env, value);
-  }
-  case 'C': {
-    unsigned char value = *(unsigned char *)valuePtr;
-    return Napi::Number::New(env, value);
-  }
-  case 'I': {
-    unsigned int value = *(unsigned int *)valuePtr;
-    return Napi::Number::New(env, value);
-  }
-  case 'S': {
-    unsigned short value = *(unsigned short *)valuePtr;
-    return Napi::Number::New(env, value);
-  }
-  case 'L': {
-    unsigned long value = *(unsigned long *)valuePtr;
-    return Napi::Number::New(env, value);
-  }
-  case 'Q': {
-    unsigned long long value = *(unsigned long long *)valuePtr;
-    return Napi::Number::New(env, value);
-  }
-  case 'f': {
-    float value = *(float *)valuePtr;
-    return Napi::Number::New(env, value);
-  }
-  case 'd': {
-    double value = *(double *)valuePtr;
-    return Napi::Number::New(env, value);
-  }
-  case 'B': {
-    bool value = *(bool *)valuePtr;
+
+  // Bool -> Boolean
+  Napi::Value operator()(std::type_identity<bool>) const {
+    bool value = *static_cast<bool*>(valuePtr);
     return Napi::Boolean::New(env, value);
   }
-  case '*': {
-    char *value = *(char **)valuePtr;
+
+  // C string -> String or Null
+  Napi::Value operator()(std::type_identity<ObjCCStringTag>) const {
+    char* value = *static_cast<char**>(valuePtr);
     if (value == nullptr) {
       return env.Null();
     }
     return Napi::String::New(env, value);
   }
-  case '@': {
-    id value = *(__strong id *)valuePtr;
+
+  // id -> ObjcObject or Null
+  Napi::Value operator()(std::type_identity<ObjCIdTag>) const {
+    id value = *static_cast<__strong id*>(valuePtr);
     if (value == nil) {
       return env.Null();
     }
     return ObjcObject::NewInstance(env, value);
   }
-  case '#': {
-    Class value = *(Class *)valuePtr;
+
+  // Class -> ObjcObject or Null
+  Napi::Value operator()(std::type_identity<ObjCClassTag>) const {
+    Class value = *static_cast<Class*>(valuePtr);
     if (value == nil) {
       return env.Null();
     }
     return ObjcObject::NewInstance(env, value);
   }
-  case ':': {
-    SEL value = *(SEL *)valuePtr;
+
+  // SEL -> String or Null
+  Napi::Value operator()(std::type_identity<ObjCSELTag>) const {
+    SEL value = *static_cast<SEL*>(valuePtr);
     if (value == nullptr) {
       return env.Null();
     }
-    NSString *selectorString = NSStringFromSelector(value);
+    NSString* selectorString = NSStringFromSelector(value);
     if (selectorString == nil) {
       return env.Null();
     }
     return Napi::String::New(env, [selectorString UTF8String]);
   }
-  case 'v':
-    return env.Undefined();
-  default:
+
+  // Pointer -> Undefined (not fully supported)
+  Napi::Value operator()(std::type_identity<ObjCPointerTag>) const {
     return env.Undefined();
   }
+
+  // Void -> Undefined
+  Napi::Value operator()(std::type_identity<ObjCVoidTag>) const {
+    return env.Undefined();
+  }
+};
+
+// Convert an Objective-C value (from a pointer) to a JavaScript value
+inline Napi::Value ObjCToJS(Napi::Env env, void *valuePtr, char typeCode) {
+  return DispatchByTypeCode(typeCode, ObjCToJSVisitor{env, valuePtr});
 }
 
-// Extract an argument from NSInvocation and convert to JS value
-inline Napi::Value ExtractInvocationArgumentToJS(Napi::Env env,
-                                                 NSInvocation *invocation,
-                                                 NSUInteger index,
-                                                 char typeCode) {
-  switch (typeCode) {
-  case 'c': {
-    char value;
+// Visitor for extracting NSInvocation arguments to JS
+struct ExtractInvocationArgVisitor {
+  Napi::Env env;
+  NSInvocation* invocation;
+  NSUInteger index;
+
+  // Numeric types -> Number (or Boolean for bool)
+  template <typename T>
+  auto operator()(std::type_identity<T>) const 
+      -> std::enable_if_t<is_numeric_v<T> && !std::is_same_v<T, bool>, Napi::Value> {
+    T value;
     [invocation getArgument:&value atIndex:index];
-    return Napi::Number::New(env, value);
+    return Napi::Number::New(env, static_cast<double>(value));
   }
-  case 'i': {
-    int value;
-    [invocation getArgument:&value atIndex:index];
-    return Napi::Number::New(env, value);
-  }
-  case 's': {
-    short value;
-    [invocation getArgument:&value atIndex:index];
-    return Napi::Number::New(env, value);
-  }
-  case 'l': {
-    long value;
-    [invocation getArgument:&value atIndex:index];
-    return Napi::Number::New(env, value);
-  }
-  case 'q': {
-    long long value;
-    [invocation getArgument:&value atIndex:index];
-    return Napi::Number::New(env, value);
-  }
-  case 'C': {
-    unsigned char value;
-    [invocation getArgument:&value atIndex:index];
-    return Napi::Number::New(env, value);
-  }
-  case 'I': {
-    unsigned int value;
-    [invocation getArgument:&value atIndex:index];
-    return Napi::Number::New(env, value);
-  }
-  case 'S': {
-    unsigned short value;
-    [invocation getArgument:&value atIndex:index];
-    return Napi::Number::New(env, value);
-  }
-  case 'L': {
-    unsigned long value;
-    [invocation getArgument:&value atIndex:index];
-    return Napi::Number::New(env, value);
-  }
-  case 'Q': {
-    unsigned long long value;
-    [invocation getArgument:&value atIndex:index];
-    return Napi::Number::New(env, value);
-  }
-  case 'f': {
-    float value;
-    [invocation getArgument:&value atIndex:index];
-    return Napi::Number::New(env, value);
-  }
-  case 'd': {
-    double value;
-    [invocation getArgument:&value atIndex:index];
-    return Napi::Number::New(env, value);
-  }
-  case 'B': {
+
+  // Bool -> Boolean
+  Napi::Value operator()(std::type_identity<bool>) const {
     bool value;
     [invocation getArgument:&value atIndex:index];
     return Napi::Boolean::New(env, value);
   }
-  case '*': {
-    char *value;
+
+  // C string -> String or Null
+  Napi::Value operator()(std::type_identity<ObjCCStringTag>) const {
+    char* value;
     [invocation getArgument:&value atIndex:index];
     if (value == nullptr) {
       return env.Null();
     }
     return Napi::String::New(env, value);
   }
-  case '@': {
+
+  // id -> ObjcObject or Null
+  Napi::Value operator()(std::type_identity<ObjCIdTag>) const {
     __unsafe_unretained id value;
     [invocation getArgument:&value atIndex:index];
     if (value == nil) {
@@ -240,7 +176,9 @@ inline Napi::Value ExtractInvocationArgumentToJS(Napi::Env env,
     }
     return ObjcObject::NewInstance(env, value);
   }
-  case '#': {
+
+  // Class -> ObjcObject or Null
+  Napi::Value operator()(std::type_identity<ObjCClassTag>) const {
     Class value;
     [invocation getArgument:&value atIndex:index];
     if (value == nil) {
@@ -248,29 +186,43 @@ inline Napi::Value ExtractInvocationArgumentToJS(Napi::Env env,
     }
     return ObjcObject::NewInstance(env, value);
   }
-  case ':': {
+
+  // SEL -> String or Null
+  Napi::Value operator()(std::type_identity<ObjCSELTag>) const {
     SEL value;
     [invocation getArgument:&value atIndex:index];
     if (value == nullptr) {
       return env.Null();
     }
-    NSString *selString = NSStringFromSelector(value);
+    NSString* selString = NSStringFromSelector(value);
     if (selString == nil) {
       return env.Null();
     }
     return Napi::String::New(env, [selString UTF8String]);
   }
-  case '^': {
-    void *value;
+
+  // Pointer -> Undefined (not fully supported)
+  Napi::Value operator()(std::type_identity<ObjCPointerTag>) const {
+    void* value;
     [invocation getArgument:&value atIndex:index];
     if (value == nullptr) {
       return env.Null();
     }
     return env.Undefined();
   }
-  default:
+
+  // Void -> Undefined
+  Napi::Value operator()(std::type_identity<ObjCVoidTag>) const {
     return env.Undefined();
   }
+};
+
+// Extract an argument from NSInvocation and convert to JS value
+inline Napi::Value ExtractInvocationArgumentToJS(Napi::Env env,
+                                                 NSInvocation *invocation,
+                                                 NSUInteger index,
+                                                 char typeCode) {
+  return DispatchByTypeCode(typeCode, ExtractInvocationArgVisitor{env, invocation, index});
 }
 
 // MARK: - JS to ObjC Return Value Conversion
@@ -491,90 +443,39 @@ inline void SetInvocationReturnFromJS(NSInvocation *invocation,
 
 // MARK: - Return Value Extraction from NSInvocation
 
-// Get return value from NSInvocation and convert to JS
-inline Napi::Value GetInvocationReturnAsJS(Napi::Env env,
-                                           NSInvocation *invocation,
-                                           NSMethodSignature *methodSignature) {
-  SimplifiedTypeEncoding returnType([methodSignature methodReturnType]);
+// Visitor for getting return values from NSInvocation
+struct GetInvocationReturnVisitor {
+  Napi::Env env;
+  NSInvocation* invocation;
 
-  switch (returnType[0]) {
-  case 'c': {
-    char result;
+  // Numeric types -> Number (or Boolean for bool)
+  template <typename T>
+  auto operator()(std::type_identity<T>) const 
+      -> std::enable_if_t<is_numeric_v<T> && !std::is_same_v<T, bool>, Napi::Value> {
+    T result;
     [invocation getReturnValue:&result];
-    return Napi::Number::New(env, result);
+    return Napi::Number::New(env, static_cast<double>(result));
   }
-  case 'i': {
-    int result;
-    [invocation getReturnValue:&result];
-    return Napi::Number::New(env, result);
-  }
-  case 's': {
-    short result;
-    [invocation getReturnValue:&result];
-    return Napi::Number::New(env, result);
-  }
-  case 'l': {
-    long result;
-    [invocation getReturnValue:&result];
-    return Napi::Number::New(env, result);
-  }
-  case 'q': {
-    long long result;
-    [invocation getReturnValue:&result];
-    return Napi::Number::New(env, result);
-  }
-  case 'C': {
-    unsigned char result;
-    [invocation getReturnValue:&result];
-    return Napi::Number::New(env, result);
-  }
-  case 'I': {
-    unsigned int result;
-    [invocation getReturnValue:&result];
-    return Napi::Number::New(env, result);
-  }
-  case 'S': {
-    unsigned short result;
-    [invocation getReturnValue:&result];
-    return Napi::Number::New(env, result);
-  }
-  case 'L': {
-    unsigned long result;
-    [invocation getReturnValue:&result];
-    return Napi::Number::New(env, result);
-  }
-  case 'Q': {
-    unsigned long long result;
-    [invocation getReturnValue:&result];
-    return Napi::Number::New(env, result);
-  }
-  case 'f': {
-    float result;
-    [invocation getReturnValue:&result];
-    return Napi::Number::New(env, result);
-  }
-  case 'd': {
-    double result;
-    [invocation getReturnValue:&result];
-    return Napi::Number::New(env, result);
-  }
-  case 'B': {
+
+  // Bool -> Boolean
+  Napi::Value operator()(std::type_identity<bool>) const {
     bool result;
     [invocation getReturnValue:&result];
     return Napi::Boolean::New(env, result);
   }
-  case 'v':
-    return env.Undefined();
-  case '*': {
-    char *result = nullptr;
+
+  // C string -> String or Null
+  Napi::Value operator()(std::type_identity<ObjCCStringTag>) const {
+    char* result = nullptr;
     [invocation getReturnValue:&result];
     if (result == nullptr) {
       return env.Null();
     }
     return Napi::String::New(env, result);
   }
-  case '@':
-  case '#': {
+
+  // id -> ObjcObject or Null
+  Napi::Value operator()(std::type_identity<ObjCIdTag>) const {
     id result = nil;
     [invocation getReturnValue:&result];
     if (result == nil) {
@@ -582,23 +483,50 @@ inline Napi::Value GetInvocationReturnAsJS(Napi::Env env,
     }
     return ObjcObject::NewInstance(env, result);
   }
-  case ':': {
+
+  // Class -> ObjcObject or Null (same as id)
+  Napi::Value operator()(std::type_identity<ObjCClassTag>) const {
+    id result = nil;
+    [invocation getReturnValue:&result];
+    if (result == nil) {
+      return env.Null();
+    }
+    return ObjcObject::NewInstance(env, result);
+  }
+
+  // SEL -> String or Null
+  Napi::Value operator()(std::type_identity<ObjCSELTag>) const {
     SEL result = nullptr;
     [invocation getReturnValue:&result];
     if (result == nullptr) {
       return env.Null();
     }
-    NSString *selectorString = NSStringFromSelector(result);
+    NSString* selectorString = NSStringFromSelector(result);
     if (selectorString == nil) {
       return env.Null();
     }
     return Napi::String::New(env, [selectorString UTF8String]);
   }
-  default:
-    Napi::TypeError::New(env, "Unsupported return type (post-invoke)")
+
+  // Pointer -> Error (unsupported)
+  Napi::Value operator()(std::type_identity<ObjCPointerTag>) const {
+    Napi::TypeError::New(env, "Unsupported return type (pointer)")
         .ThrowAsJavaScriptException();
     return env.Null();
   }
+
+  // Void -> Undefined
+  Napi::Value operator()(std::type_identity<ObjCVoidTag>) const {
+    return env.Undefined();
+  }
+};
+
+// Get return value from NSInvocation and convert to JS
+inline Napi::Value GetInvocationReturnAsJS(Napi::Env env,
+                                           NSInvocation *invocation,
+                                           NSMethodSignature *methodSignature) {
+  SimplifiedTypeEncoding returnType([methodSignature methodReturnType]);
+  return DispatchByTypeCode(returnType[0], GetInvocationReturnVisitor{env, invocation});
 }
 
 #endif // TYPE_CONVERSION_H

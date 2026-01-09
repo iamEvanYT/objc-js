@@ -23,9 +23,10 @@ This plan addresses code quality, performance, redundant code removal, and memor
 
 - [x] Create `ForwardInvocationCommon()` shared logic (forwarding-common.h/mm)
 - [x] Create `pointer-utils.h` with `WritePointerToBuffer()`, `ReadPointerFromBuffer()`, etc.
-- [ ] Create template-based type dispatch in `type-conversion.h` (deferred - lower priority)
+- [x] Create template-based type dispatch in `type-dispatch.h` with `DispatchByTypeCode()`
 - [x] Create `runtime-detection.h` with `IsElectronRuntime()`
 - [x] Consolidate duplicate code paths (ForwardInvocation now uses common impl)
+- [x] Refactored `type-conversion.h` to use visitor pattern (ObjCToJS, ExtractInvocationArgToJS, GetInvocationReturnAsJS)
 - [x] Run tests after Phase 2 (90 pass, 2 skip, 0 fail)
 
 ### Phase 3: Performance Optimizations
