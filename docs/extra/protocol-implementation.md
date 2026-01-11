@@ -1,12 +1,10 @@
-# Protocol Implementation
-
-**objc-js** supports creating Objective-C protocol implementations from JavaScript. This allows you to create delegate objects that can be passed to Objective-C APIs.
+# Protocol Implementation Support
 
 ## Overview
 
-The `NobjcProtocol.implement()` API enables you to create custom delegate objects that implement protocols like `ASAuthorizationControllerDelegate`, `NSCopying`, and any other Objective-C protocol.
+The `@iamevan/nobjc` library now supports creating Objective-C protocol implementations from JavaScript. This enables you to create custom delegate objects that implement protocols like `ASAuthorizationControllerDelegate`, `NSCopying`, and any other Objective-C protocol.
 
-### Features
+## Features
 
 - **Dynamic Class Creation**: Creates Objective-C classes at runtime using the Objective-C runtime APIs
 - **Protocol Conformance**: Automatically adds protocol conformance when the protocol is found
@@ -15,24 +13,34 @@ The `NobjcProtocol.implement()` API enables you to create custom delegate object
 - **Argument Marshalling**: Automatically converts arguments between JavaScript and Objective-C types
 - **Type Safety**: Supports all standard Objective-C types (primitives, objects, strings, etc.)
 
-## Creating a Protocol Implementation
+## API
 
-Use `NobjcProtocol.implement()` to create an object that implements a protocol:
+### `NobjcProtocol.implement(protocolName, methodImplementations)`
+
+Creates a new Objective-C object that implements the specified protocol.
+
+**Parameters:**
+
+- `protocolName` (string): The name of the Objective-C protocol (e.g., "ASAuthorizationControllerDelegate")
+- `methodImplementations` (object): An object mapping method names to JavaScript functions
+
+**Returns:** A `NobjcObject` that can be passed to Objective-C APIs
+
+**Example:**
 
 ```typescript
-import { NobjcProtocol } from "objc-js";
+import { NobjcProtocol } from "@iamevan/nobjc";
 
 const delegate = NobjcProtocol.implement("ASAuthorizationControllerDelegate", {
   authorizationController$didCompleteWithAuthorization$: (controller, authorization) => {
     console.log("Authorization completed successfully!");
-    console.log("Authorization:", authorization);
   },
   authorizationController$didCompleteWithError$: (controller, error) => {
     console.error("Authorization failed:", error);
   }
 });
 
-// Pass the delegate to an Objective-C API
+// Use the delegate with an Objective-C API
 authController.setDelegate$(delegate);
 ```
 
@@ -40,34 +48,34 @@ authController.setDelegate$(delegate);
 
 Method names use the `$` notation to represent colons in Objective-C selectors:
 
-| Objective-C Selector | JavaScript Method Name |
-| --- | --- |
-| `method` | `method` |
-| `method:` | `method$` |
-| `method:withArg:` | `method$withArg$` |
+| Objective-C Selector                                    | JavaScript Method Name                                  |
+| ------------------------------------------------------- | ------------------------------------------------------- |
+| `method`                                                | `method`                                                |
+| `method:`                                               | `method$`                                               |
+| `method:withArg:`                                       | `method$withArg$`                                       |
 | `authorizationController:didCompleteWithAuthorization:` | `authorizationController$didCompleteWithAuthorization$` |
 
 ## Type Conversion
 
 Arguments and return values are automatically converted between JavaScript and Objective-C:
 
-| Objective-C Type | JavaScript Type | Notes |
-| --- | --- | --- |
-| `char`, `int`, `short`, `long`, `long long` | `number` | Signed integers |
-| `unsigned char`, `unsigned int`, etc. | `number` | Unsigned integers |
-| `float`, `double` | `number` | Floating point |
-| `BOOL` | `boolean` | Boolean values |
-| `char *` | `string` | C strings |
-| `id`, `NSObject *` | `NobjcObject` | Objective-C objects |
-| `Class` | `NobjcObject` | Objective-C classes |
-| `SEL` | `string` | Selectors as strings |
-| `nil` | `null` | Null values |
+| Objective-C Type                            | JavaScript Type | Notes                |
+| ------------------------------------------- | --------------- | -------------------- |
+| `char`, `int`, `short`, `long`, `long long` | `number`        | Signed integers      |
+| `unsigned char`, `unsigned int`, etc.       | `number`        | Unsigned integers    |
+| `float`, `double`                           | `number`        | Floating point       |
+| `BOOL`                                      | `boolean`       | Boolean values       |
+| `char *`                                    | `string`        | C strings            |
+| `id`, `NSObject *`                          | `NobjcObject`   | Objective-C objects  |
+| `Class`                                     | `NobjcObject`   | Objective-C classes  |
+| `SEL`                                       | `string`        | Selectors as strings |
+| `nil`                                       | `null`          | Null values          |
 
 ## Memory Management
 
 Memory is automatically managed:
 
-1. **Callback Lifetime**: JavaScript callbacks are stored in a global map and kept alive
+1. **Callback Lifetime**: JavaScript callbacks are stored in a global map and kept alive using `Napi::FunctionReference`
 2. **Automatic Cleanup**: When the Objective-C object is deallocated, the callbacks are automatically released
 3. **No Manual Cleanup**: You don't need to call any cleanup methods
 
@@ -103,39 +111,41 @@ When a protocol is found, method signatures are retrieved from the protocol meta
 ### Current Limitations
 
 1. **Single-threaded**: Currently assumes callbacks are invoked on the main thread
-2. **Limited Pointer Support**: Pointer types (other than objects) have limited support
+2. **No Return Values**: Method implementations currently don't support return values (always return void)
+3. **Limited Pointer Support**: Pointer types (other than objects) have limited support
 
 ### Future Enhancements
 
-1. **Thread Safety**: Add support for callbacks from non-JavaScript threads
-2. **Better Pointer Handling**: Improve support for arbitrary pointer types
-3. **Struct Support**: Add support for passing structs by value
-4. **Block Support**: Add support for block arguments
+1. **Thread Safety**: Add support for callbacks from non-JavaScript threads using `Napi::ThreadSafeFunction`
+2. **Return Values**: Add support for returning values from JavaScript callbacks
+3. **Better Pointer Handling**: Improve support for arbitrary pointer types
+4. **Struct Support**: Add support for passing structs by value
+5. **Block Support**: Add support for block arguments
 
-## Examples
+## Testing
 
-### Basic Delegate
+The implementation includes comprehensive tests in `scripts/test-protocol-implementation.ts`:
 
-```typescript
-import { NobjcLibrary, NobjcProtocol } from "objc-js";
+- Creating protocol implementations
+- Multiple protocol implementations
+- Object and primitive arguments
+- Memory management
+- Real protocol conformance (NSCopying)
 
-const foundation = new NobjcLibrary("/System/Library/Frameworks/Foundation.framework/Foundation");
-const NSString = foundation["NSString"];
+Run tests with:
 
-const delegate = NobjcProtocol.implement("NSCopying", {
-  copyWithZone$: (zone) => {
-    console.log("Copying object");
-    // Return a copy
-    return NSString.stringWithUTF8String$("Copy");
-  }
-});
+```bash
+npm run test-protocol-implementation
 ```
 
-### WebAuthn/Passkeys with AuthenticationServices
+## Example: WebAuthn/Passkeys
+
+Here's a complete example using `ASAuthorizationController`:
 
 ```typescript
-import { NobjcLibrary, NobjcProtocol } from "objc-js";
+import { NobjcLibrary, NobjcProtocol } from "@iamevan/nobjc";
 
+// Load the AuthenticationServices framework
 const authServices = new NobjcLibrary(
   "/System/Library/Frameworks/AuthenticationServices.framework/AuthenticationServices"
 );
@@ -149,7 +159,6 @@ const delegate = NobjcProtocol.implement("ASAuthorizationControllerDelegate", {
   authorizationController$didCompleteWithAuthorization$: (controller, authorization) => {
     // Handle successful authorization
     const credential = authorization.credential();
-    console.log("Credential:", credential);
 
     if (credential.respondsToSelector$("rawClientDataJSON")) {
       // This is a passkey credential
@@ -191,7 +200,11 @@ If your callbacks aren't being invoked:
 2. Check that the delegate is being retained (store it in a variable that stays in scope)
 3. Verify that the Objective-C code is actually calling the delegate methods
 
-## See Also
+## Contributing
 
-- [Subclassing Documentation](./subclassing.md)
-- [API Reference](./api-reference.md)
+When adding new features or fixing bugs:
+
+1. Update the native implementation in `src/native/protocol-impl.mm`
+2. Update type definitions in `types/native/nobjc_native.d.ts`
+3. Add tests to `scripts/test-protocol-implementation.ts`
+4. Update documentation in this file and the README

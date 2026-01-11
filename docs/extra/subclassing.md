@@ -554,4 +554,5 @@ Out-parameters (like `NSError**`, `id**`) are fully supported in both method def
 ## See Also
 
 - [Protocol Implementation Documentation](./protocol-implementation.md)
-- [API Reference](./api-reference.md)
+- [Object Arguments Documentation](./object-arguments.md)
+- [Subclassing Design Document](./subclassing-design.md)
