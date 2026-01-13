@@ -4,14 +4,14 @@ const require = createRequire(import.meta.url);
 
 describe("Native Code Tests", () => {
   test("should load Foundation framework", () => {
-    const binding = require("#nobjc_native");
+    const binding = require("../dist/native");
     expect(() => {
       binding.LoadLibrary("/System/Library/Frameworks/Foundation.framework/Foundation");
     }).not.toThrow();
   });
 
   test("should get NSString class object", () => {
-    const binding = require("#nobjc_native");
+    const binding = require("../dist/native");
     binding.LoadLibrary("/System/Library/Frameworks/Foundation.framework/Foundation");
     const NSString = binding.GetClassObject("NSString");
     expect(NSString).toBeDefined();
@@ -19,7 +19,7 @@ describe("Native Code Tests", () => {
   });
 
   test("should create NSString object with stringWithUTF8String:", () => {
-    const binding = require("#nobjc_native");
+    const binding = require("../dist/native");
     binding.LoadLibrary("/System/Library/Frameworks/Foundation.framework/Foundation");
     const NSString = binding.GetClassObject("NSString");
     const helloStr = NSString.$msgSend("stringWithUTF8String:", "Hello, Objective-C!");
@@ -28,7 +28,7 @@ describe("Native Code Tests", () => {
   });
 
   test("should get length of NSString", () => {
-    const binding = require("#nobjc_native");
+    const binding = require("../dist/native");
     binding.LoadLibrary("/System/Library/Frameworks/Foundation.framework/Foundation");
     const NSString = binding.GetClassObject("NSString");
     const helloStr = NSString.$msgSend("stringWithUTF8String:", "Hello, Objective-C!");
@@ -37,7 +37,7 @@ describe("Native Code Tests", () => {
   });
 
   test("should get UTF8String from NSString", () => {
-    const binding = require("#nobjc_native");
+    const binding = require("../dist/native");
     binding.LoadLibrary("/System/Library/Frameworks/Foundation.framework/Foundation");
     const NSString = binding.GetClassObject("NSString");
     const helloStr = NSString.$msgSend("stringWithUTF8String:", "Hello, Objective-C!");

@@ -1,7 +1,9 @@
 import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 import * as _binding from "#nobjc_native";
-const binding: typeof _binding = require("#nobjc_native");
+import path from "node:path";
+const binding: typeof _binding = require("node-gyp-build")(path.join(__dirname, ".."));
+
 const {
   LoadLibrary,
   GetClassObject,

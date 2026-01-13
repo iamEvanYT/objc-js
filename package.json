@@ -18,12 +18,12 @@
   },
   "files": [
     "dist/",
-    "build/Release/nobjc_native.node",
+    "prebuilds/",
     "binding.gyp",
     "src/native"
   ],
   "scripts": {
-    "install": "node-gyp rebuild",
+    "install": "node-gyp-build",
     "build-native": "node-gyp build",
     "build-scripts": "tsc --project scripts/tsconfig.json",
     "build-source": "tsc --project src/ts/tsconfig.json",
@@ -38,18 +38,23 @@
     "test:protocol-implementation": "bun test tests/test-protocol-implementation.test.ts",
     "make-clangd-config": "node ./scripts/make-clangd-config.js",
     "format": "prettier --write \"**/*.{ts,js,json,md}\"",
-    "preinstall-disabled": "npm run build-scripts && npm run make-clangd-config"
+    "preinstall-disabled": "npm run build-scripts && npm run make-clangd-config",
+    "prebuild:arm64": "prebuildify --napi --strip --arch arm64",
+    "prebuild:x64": "prebuildify --napi --strip --arch x64",
+    "prebuild:all": "bun run prebuild:arm64 && bun run prebuild:x64"
   },
   "version": "1.0.0",
   "description": "Objective-C bridge for Node.js",
   "main": "dist/index.js",
   "dependencies": {
-    "node-addon-api": "^8.5.0"
+    "node-addon-api": "^8.5.0",
+    "node-gyp-build": "^4.8.4"
   },
   "devDependencies": {
     "@types/bun": "latest",
     "@types/node": "^20.0.0",
-    "node-gyp": "^11.4.2",
+    "node-gyp": "^12.1.0",
+    "prebuildify": "^6.0.1",
     "prettier": "^3.7.4",
     "typescript": "^5.9.3"
   },
