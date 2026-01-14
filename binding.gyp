@@ -16,13 +16,13 @@
             ],
             "include_dirs": [
                 "<!@(node -p \"require('node-addon-api').include\")",
-                "<!@(pkg-config --cflags-only-I libffi | sed 's/-I//g')"
+                "<!@(brew --prefix libffi)/include"
             ],
             "dependencies": [
                 "<!(node -p \"require('node-addon-api').gyp\")"
             ],
             "libraries": [
-                "-lffi"
+                "<!@(brew --prefix libffi)/lib/libffi.a"
             ],
             "xcode_settings": {
                 "MACOSX_DEPLOYMENT_TARGET": "13.3",

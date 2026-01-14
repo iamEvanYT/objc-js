@@ -18,6 +18,9 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
 
+      - name: Install libffi (Build for 13.3+ & arm64)
+        run: brew fetch --bottle-tag=arm64_ventura libffi
+
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
@@ -27,8 +30,14 @@ jobs:
       - name: Test
         run: bun test
 
-      - name: Prebuild all architectures
-        run: bun run prebuild:all
+      - name: Prebuild arm64 architecture
+        run: bun run prebuild:arm64
+
+      - name: Install libffi (Build for 13.3+ & x64)
+        run: brew fetch --bottle-tag=ventura libffi
+
+      - name: Prebuild x64 architecture
+        run: bun run prebuild:x64
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
