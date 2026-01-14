@@ -18,8 +18,35 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
 
+      - name: Install latest libffi
+        run: brew install libffi
+
       - name: Install libffi (Build for 13.3+ & arm64)
-        run: brew fetch --bottle-tag=arm64_ventura libffi
+        run: |
+          # Fetch Ventura bottle
+          brew fetch --bottle-tag=arm64_ventura libffi
+
+          # Get the bottle path
+          BOTTLE_PATH=$(ls -t "$(brew --cache)/downloads/"*libffi*arm64_ventura*bottle*.tar.gz | head -n 1)
+          echo "BOTTLE_PATH: $BOTTLE_PATH"
+
+          # Extract to temp location first
+          TEMP_DIR=$(mktemp -d)
+          echo "Extracting bottle to temp location: $TEMP_DIR"
+          tar -xzf $BOTTLE_PATH -C $TEMP_DIR
+
+          # Find the libffi version directory
+          LIBFFI_VERSION_DIR=$(find $TEMP_DIR/libffi -maxdepth 1 -type d -name "[0-9]*" | head -n 1)
+          echo "Found libffi version directory: $LIBFFI_VERSION_DIR"
+
+          # Clear and populate the brew libffi prefix
+          LIBFFI_PREFIX=$(brew --prefix libffi)
+          echo "Clearing and populating: $LIBFFI_PREFIX"
+          rm -rf $LIBFFI_PREFIX/*
+          cp -R $LIBFFI_VERSION_DIR/* $LIBFFI_PREFIX/
+
+          # Cleanup temp directory
+          rm -rf $TEMP_DIR
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
@@ -34,7 +61,31 @@ jobs:
         run: bun run prebuild:arm64
 
       - name: Install libffi (Build for 13.3+ & x64)
-        run: brew fetch --bottle-tag=ventura libffi
+        run: |
+          # Fetch Ventura bottle
+          brew fetch --bottle-tag=ventura libffi
+
+          # Get the bottle path
+          BOTTLE_PATH=$(ls -t "$(brew --cache)/downloads/"*libffi*ventura*bottle*.tar.gz | head -n 1)
+          echo "BOTTLE_PATH: $BOTTLE_PATH"
+
+          # Extract to temp location first
+          TEMP_DIR=$(mktemp -d)
+          echo "Extracting bottle to temp location: $TEMP_DIR"
+          tar -xzf $BOTTLE_PATH -C $TEMP_DIR
+
+          # Find the libffi version directory
+          LIBFFI_VERSION_DIR=$(find $TEMP_DIR/libffi -maxdepth 1 -type d -name "[0-9]*" | head -n 1)
+          echo "Found libffi version directory: $LIBFFI_VERSION_DIR"
+
+          # Clear and populate the brew libffi prefix
+          LIBFFI_PREFIX=$(brew --prefix libffi)
+          echo "Clearing and populating: $LIBFFI_PREFIX"
+          rm -rf $LIBFFI_PREFIX/*
+          cp -R $LIBFFI_VERSION_DIR/* $LIBFFI_PREFIX/
+
+          # Cleanup temp directory
+          rm -rf $TEMP_DIR
 
       - name: Prebuild x64 architecture
         run: bun run prebuild:x64
