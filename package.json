@@ -39,8 +39,8 @@
     "make-clangd-config": "node ./scripts/make-clangd-config.js",
     "format": "prettier --write \"**/*.{ts,js,json,md}\"",
     "preinstall-disabled": "npm run build-scripts && npm run make-clangd-config",
-    "prebuild:arm64": "prebuildify --napi --strip --arch arm64",
-    "prebuild:x64": "prebuildify --napi --strip --arch x64",
+    "prebuild:arm64": "prebuildify --napi --strip --arch arm64 -r node --tagArmv",
+    "prebuild:x64": "prebuildify --napi --strip --arch x64 -r node",
     "prebuild:all": "bun run prebuild:arm64 && bun run prebuild:x64"
   },
   "version": "1.0.3",
@@ -58,5 +58,8 @@
     "prettier": "^3.7.4",
     "typescript": "^5.9.3"
   },
-  "gypfile": true
+  "gypfile": true,
+  "patchedDependencies": {
+    "prebuildify@6.0.1": "patches/prebuildify@6.0.1.patch"
+  }
 }

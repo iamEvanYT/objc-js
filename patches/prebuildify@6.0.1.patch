@@ -1,0 +1,21 @@
+diff --git a/node_modules/prebuildify/.bun-tag-ec4e7414bfd90653 b/.bun-tag-ec4e7414bfd90653
+new file mode 100644
+index 0000000000000000000000000000000000000000..e69de29bb2d1d6434b8b29ae775ad8c2e48c5391
+diff --git a/index.js b/index.js
+index 7729aaf873cef95e613f356d37cf55909e8b5a6d..622ebd7cc2a10e19fc35d4586e85b48fe39aa8be 100644
+--- a/index.js
++++ b/index.js
+@@ -128,10 +128,12 @@ function encodeName (name) {
+ }
+ 
+ function prebuildName (target, opts) {
+-  var tags = [encodeName(opts.name || target.runtime)]
++  var tags = [encodeName(target.runtime || opts.name)]
+ 
+   if (!opts.napi) {
+     tags.push('abi' + abi.getAbi(target.target, target.runtime))
++  } else {
++    tags.push('napi')
+   }
+ 
+   if (opts.tagUv) {
