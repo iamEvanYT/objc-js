@@ -1,5 +1,9 @@
 # Changelog
 
+## [1.0.4] - 2026-01-14
+
+- fix: prebuilds not being detected by `@electron/rebuild`
+
 ## [1.0.3] - 2026-01-14
 
 - fix: native.js not loading correctly
