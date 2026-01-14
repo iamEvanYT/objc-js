@@ -1,8 +1,11 @@
 import { createRequire } from "node:module";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
 const require = createRequire(import.meta.url);
 import * as _binding from "#nobjc_native";
-import path from "node:path";
-const binding: typeof _binding = require("node-gyp-build")(path.join(__dirname, ".."));
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+const binding: typeof _binding = require("node-gyp-build")(join(__dirname, ".."));
 
 const {
   LoadLibrary,
