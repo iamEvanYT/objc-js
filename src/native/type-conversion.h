@@ -84,6 +84,109 @@ inline const char *SimplifyTypeEncoding(const char *typeEncoding) {
   return ptr;
 }
 
+// MARK: - Struct Encoding Parsing Utilities
+
+/**
+ * Result of parsing a struct encoding header ({Name=...).
+ */
+struct StructEncodingHeader {
+  std::string name;        // Struct name (e.g., "CGRect")
+  const char *fieldsStart; // Pointer to first field encoding (past '='), or
+                           // nullptr if error/empty
+  bool empty;              // True if struct has no fields
+};
+
+/**
+ * Parse the header of a struct type encoding.
+ * Extracts the struct name and advances past the '=' separator.
+ * Returns a header with fieldsStart pointing to the first field,
+ * or nullptr if the encoding is malformed or the struct is empty.
+ */
+inline StructEncodingHeader ParseStructEncodingHeader(const char *encoding) {
+  StructEncodingHeader result{"", nullptr, false};
+
+  if (!encoding || encoding[0] != '{') {
+    return result;
+  }
+
+  const char *ptr = encoding + 1;
+  const char *nameStart = ptr;
+  while (*ptr && *ptr != '=' && *ptr != '}') {
+    ptr++;
+  }
+  result.name = std::string(nameStart, ptr - nameStart);
+
+  if (*ptr == '}') {
+    result.empty = true;
+    return result;
+  }
+
+  if (*ptr != '=') {
+    return result; // Malformed
+  }
+
+  ptr++; // Skip '='
+  result.fieldsStart = ptr;
+  return result;
+}
+
+/**
+ * Advance a pointer past one complete field type encoding.
+ * Handles nested structs {}, unions (), pointers ^, and simple types.
+ * Returns the encoding string for the field.
+ */
+inline std::string SkipOneFieldEncoding(const char *&ptr) {
+  const char *start = ptr;
+
+  if (*ptr == '{') {
+    // Nested struct — find matching '}'
+    int depth = 1;
+    ptr++;
+    while (*ptr && depth > 0) {
+      if (*ptr == '{')
+        depth++;
+      else if (*ptr == '}')
+        depth--;
+      ptr++;
+    }
+  } else if (*ptr == '(') {
+    // Union — find matching ')'
+    int depth = 1;
+    ptr++;
+    while (*ptr && depth > 0) {
+      if (*ptr == '(')
+        depth++;
+      else if (*ptr == ')')
+        depth--;
+      ptr++;
+    }
+  } else if (*ptr == '^') {
+    // Pointer type — skip '^' and the pointed-to type
+    ptr++;
+    if (*ptr == '{') {
+      int depth = 1;
+      ptr++;
+      while (*ptr && depth > 0) {
+        if (*ptr == '{')
+          depth++;
+        else if (*ptr == '}')
+          depth--;
+        ptr++;
+      }
+    } else if (*ptr) {
+      ptr++;
+    }
+  } else {
+    // Simple type — single character, skip any trailing digits
+    ptr++;
+    while (*ptr && isdigit(*ptr)) {
+      ptr++;
+    }
+  }
+
+  return std::string(start, ptr - start);
+}
+
 // MARK: - ObjC to JS Conversion
 
 // Visitor for converting ObjC values to JS

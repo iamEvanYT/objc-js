@@ -23,7 +23,9 @@ import { NobjcLibrary } from "objc-js";
 
 const foundation = new NobjcLibrary("/System/Library/Frameworks/Foundation.framework/Foundation");
 const appKit = new NobjcLibrary("/System/Library/Frameworks/AppKit.framework/AppKit");
-const authServices = new NobjcLibrary("/System/Library/Frameworks/AuthenticationServices.framework/AuthenticationServices");
+const authServices = new NobjcLibrary(
+  "/System/Library/Frameworks/AuthenticationServices.framework/AuthenticationServices"
+);
 ```
 
 ### Accessing Classes
@@ -92,6 +94,61 @@ const obj = NSString.alloc().initWithString$("Hello");
 console.log(obj.toString());
 // obj is automatically released when no longer referenced
 ```
+
+## Struct Support
+
+Objective-C methods that accept or return C structs are handled automatically. Pass plain JavaScript objects (or arrays) and receive JavaScript objects with named fields.
+
+### Struct Arguments
+
+When a method parameter is a struct type, pass a JavaScript object with the appropriate field names:
+
+```typescript
+// NSRange
+str.substringWithRange$({ location: 7, length: 5 });
+
+// CGRect (nested struct)
+NSWindow.alloc().initWithContentRect$styleMask$backing$defer$(
+  { origin: { x: 100, y: 100 }, size: { width: 800, height: 600 } },
+  15,
+  2,
+  false
+);
+```
+
+Arrays are also accepted, with values assigned positionally:
+
+```typescript
+str.substringWithRange$([7, 5]); // [location, length]
+```
+
+### Struct Return Values
+
+Methods that return structs produce JavaScript objects with named fields:
+
+```typescript
+const range = str.rangeOfString$(searchStr);
+// range.location, range.length
+
+const frame = window.frame();
+// frame.origin.x, frame.origin.y, frame.size.width, frame.size.height
+```
+
+### Built-in Struct Mappings
+
+| Struct                | Fields                              |
+| --------------------- | ----------------------------------- |
+| `CGPoint` / `NSPoint` | `x`, `y`                            |
+| `CGSize` / `NSSize`   | `width`, `height`                   |
+| `CGRect` / `NSRect`   | `origin` (CGPoint), `size` (CGSize) |
+| `NSRange`             | `location`, `length`                |
+| `CGVector`            | `dx`, `dy`                          |
+| `NSEdgeInsets`        | `top`, `left`, `bottom`, `right`    |
+| `CGAffineTransform`   | `a`, `b`, `c`, `d`, `tx`, `ty`      |
+
+Unrecognized structs use positional names (`field0`, `field1`, ...).
+
+For detailed usage and examples, see [Structs](./structs.md).
 
 ## NobjcClass
 
@@ -372,7 +429,9 @@ Provides macOS GUI classes: `NSWindow`, `NSView`, `NSButton`, `NSTextField`, `NS
 ### AuthenticationServices Framework
 
 ```typescript
-const authServices = new NobjcLibrary("/System/Library/Frameworks/AuthenticationServices.framework/AuthenticationServices");
+const authServices = new NobjcLibrary(
+  "/System/Library/Frameworks/AuthenticationServices.framework/AuthenticationServices"
+);
 ```
 
 Provides authentication classes: `ASAuthorizationController`, `ASAuthorizationControllerDelegate`, etc.
@@ -390,11 +449,12 @@ Provides graphics-related functionality.
 Most macOS system frameworks follow the same path pattern:
 
 ```typescript
-/System/Library/Frameworks/[FrameworkName].framework/[FrameworkName]
+/System/Labirry / Frameworks / [FrameworkName].framework / [FrameworkName];
 ```
 
 ## See Also
 
 - [Basic Usage](./basic-usage.md)
+- [Structs](./structs.md)
 - [Subclassing Documentation](./subclassing.md)
 - [Protocol Implementation Documentation](./protocol-implementation.md)

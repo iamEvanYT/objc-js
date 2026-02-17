@@ -78,6 +78,7 @@ The library automatically converts between JavaScript and Objective-C types:
 - **Strings**: JavaScript strings automatically convert to NSString
 - **Numbers**: JavaScript numbers work with NSInteger, CGFloat, etc.
 - **Objects**: Objective-C objects are wrapped in `NobjcObject` instances
+- **Structs**: Plain JavaScript objects convert to C structs (CGRect, NSRange, etc.) — see [Structs](./structs.md)
 - **null**: JavaScript `null` maps to Objective-C `nil`
 
 ## Common Frameworks
@@ -110,6 +111,7 @@ Provides authentication-related classes for WebAuthn/Passkeys.
 
 ## Next Steps
 
+- Learn how to [pass and receive structs](./structs.md) (CGRect, NSRange, etc.)
 - Learn how to [subclass Objective-C classes](./subclassing.md)
 - Implement [protocols](./protocol-implementation.md)
 - Check the [API reference](./api-reference.md)

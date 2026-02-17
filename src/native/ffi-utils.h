@@ -185,78 +185,30 @@ inline ffi_type* ParseStructEncoding(const char* encoding, size_t* outSize,
                                      std::vector<ffi_type*>& allocatedTypes) {
   NOBJC_LOG("ParseStructEncoding: parsing struct '%s'", encoding);
   
-  if (encoding[0] != '{') {
-    NOBJC_ERROR("ParseStructEncoding: Expected '{' at start");
-    return nullptr;
-  }
+  auto header = ParseStructEncodingHeader(encoding);
   
-  // Skip struct name (format: {StructName=...})
-  const char* ptr = encoding + 1;
-  while (*ptr && *ptr != '=' && *ptr != '}') {
-    ptr++;
-  }
-  
-  if (*ptr == '}') {
-    // Empty struct
+  if (header.empty) {
     NOBJC_LOG("ParseStructEncoding: empty struct");
     return &ffi_type_void;
   }
   
-  if (*ptr != '=') {
-    NOBJC_ERROR("ParseStructEncoding: Expected '=' after struct name");
+  if (!header.fieldsStart) {
+    NOBJC_ERROR("ParseStructEncoding: Invalid struct encoding '%s'", encoding);
     return nullptr;
   }
   
-  ptr++; // Skip '='
+  const char* ptr = header.fieldsStart;
   
   // Parse field types
   std::vector<ffi_type*> fieldTypes;
   
   while (*ptr && *ptr != '}') {
     // Skip any qualifiers
-    while (*ptr && (*ptr == 'r' || *ptr == 'n' || *ptr == 'N' || 
-                    *ptr == 'o' || *ptr == 'O' || *ptr == 'R' || *ptr == 'V')) {
-      ptr++;
-    }
+    ptr = SimplifyTypeEncoding(ptr);
     
     if (*ptr == '}') break;
     
-    // Determine field encoding length
-    const char* fieldStart = ptr;
-    size_t fieldLen = 1;
-    
-    if (*ptr == '{') {
-      // Nested struct - find matching '}'
-      int depth = 1;
-      ptr++;
-      while (*ptr && depth > 0) {
-        if (*ptr == '{') depth++;
-        else if (*ptr == '}') depth--;
-        ptr++;
-      }
-      fieldLen = ptr - fieldStart;
-    } else if (*ptr == '(') {
-      // Union - find matching ')'
-      int depth = 1;
-      ptr++;
-      while (*ptr && depth > 0) {
-        if (*ptr == '(') depth++;
-        else if (*ptr == ')') depth--;
-        ptr++;
-      }
-      fieldLen = ptr - fieldStart;
-    } else {
-      // Simple type - just one character (potentially with digits after)
-      ptr++;
-      // Skip any size/alignment digits
-      while (*ptr && isdigit(*ptr)) {
-        ptr++;
-      }
-      fieldLen = ptr - fieldStart;
-    }
-    
-    // Create temporary null-terminated string for field encoding
-    std::string fieldEncoding(fieldStart, fieldLen);
+    std::string fieldEncoding = SkipOneFieldEncoding(ptr);
     NOBJC_LOG("ParseStructEncoding: parsing field '%s'", fieldEncoding.c_str());
     
     // Recursively get FFI type for this field

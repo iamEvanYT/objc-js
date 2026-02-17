@@ -1,6 +1,7 @@
 #include "ObjcObject.h"
 #include "bridge.h"
 #include "pointer-utils.h"
+#include "struct-utils.h"
 #include <Foundation/Foundation.h>
 #include <napi.h>
 #include <objc/objc.h>
@@ -77,9 +78,11 @@ Napi::Value ObjcObject::$MsgSend(const Napi::CallbackInfo &info) {
   }
   const char *returnType =
       SimplifyTypeEncoding([methodSignature methodReturnType]);
+  const bool isStructReturn = (*returnType == '{');
   const char *validReturnTypes = "cislqCISLQfdB*v@#:";
-  if (strlen(returnType) != 1 ||
-      strchr(validReturnTypes, *returnType) == nullptr) {
+  if (!isStructReturn &&
+      (strlen(returnType) != 1 ||
+       strchr(validReturnTypes, *returnType) == nullptr)) {
     Napi::TypeError::New(env, "Unsupported return type (pre-invoke)")
         .ThrowAsJavaScriptException();
     return env.Null();
@@ -97,6 +100,9 @@ Napi::Value ObjcObject::$MsgSend(const Napi::CallbackInfo &info) {
   std::vector<ObjcType> storedArgs;
   storedArgs.reserve(info.Length() - 1);
 
+  // Store struct argument buffers to keep them alive until after invoke.
+  std::vector<std::vector<uint8_t>> structBuffers;
+
   for (size_t i = 1; i < info.Length(); ++i) {
     const ObjcArgumentContext context = {
         .className = std::string(object_getClassName(objcObject)),
@@ -105,6 +111,17 @@ Napi::Value ObjcObject::$MsgSend(const Napi::CallbackInfo &info) {
     };
     const char *typeEncoding =
         SimplifyTypeEncoding([methodSignature getArgumentTypeAtIndex:i + 1]);
+
+    if (IsStructTypeEncoding(typeEncoding)) {
+      // Struct argument: pack JS object into a byte buffer and set directly
+      auto buffer = PackJSValueAsStruct(env, info[i], typeEncoding);
+      [invocation setArgument:buffer.data() atIndex:i + 1];
+      structBuffers.push_back(std::move(buffer));
+      // Push a placeholder into storedArgs to keep indices aligned
+      storedArgs.push_back(BaseObjcType{std::monostate{}});
+      continue;
+    }
+
     auto arg = AsObjCArgument(info[i], typeEncoding, context);
     if (!arg.has_value()) {
       std::string errorMessageStr = std::format("Unsupported argument type {}",
@@ -128,7 +145,16 @@ Napi::Value ObjcObject::$MsgSend(const Napi::CallbackInfo &info) {
   }
 
   [invocation invoke];
-  // storedArgs goes out of scope here, after invoke has completed
+  // storedArgs and structBuffers go out of scope here, after invoke
+
+  if (isStructReturn) {
+    // Struct return: read bytes from invocation and convert to JS object
+    NSUInteger returnLength = [methodSignature methodReturnLength];
+    std::vector<uint8_t> returnBuffer(returnLength, 0);
+    [invocation getReturnValue:returnBuffer.data()];
+    return UnpackStructToJSValue(env, returnBuffer.data(), returnType);
+  }
+
   return ConvertReturnValueToJSValue(env, invocation, methodSignature);
 }
 
