@@ -1,5 +1,9 @@
 # Changelog
 
+## [1.1.0] - 2026-02-17
+
+- feat: added support for structs
+
 ## [1.0.4] - 2026-01-14
 
 - fix: prebuilds not being detected by `@electron/rebuild`
