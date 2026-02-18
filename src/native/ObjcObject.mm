@@ -5,6 +5,7 @@
 #include <Foundation/Foundation.h>
 #include <napi.h>
 #include <objc/objc.h>
+#include <memory>
 #include <unordered_map>
 #include <vector>
 
@@ -57,8 +58,21 @@ Napi::Value ObjcObject::$MsgSend(const Napi::CallbackInfo &info) {
     return env.Null();
   }
 
-  std::string selectorName = info[0].As<Napi::String>().Utf8Value();
-  SEL selector = sel_registerName(selectorName.c_str());
+  // Stack-allocate selector string to avoid heap allocation in common case
+  size_t selectorLen = 0;
+  napi_get_value_string_utf8(env, info[0], nullptr, 0, &selectorLen);
+  char selectorBuf[256];
+  std::unique_ptr<char[]> selectorHeap;
+  const char *selectorCStr;
+  if (selectorLen < sizeof(selectorBuf)) {
+    napi_get_value_string_utf8(env, info[0], selectorBuf, sizeof(selectorBuf), nullptr);
+    selectorCStr = selectorBuf;
+  } else {
+    selectorHeap.reset(new char[selectorLen + 1]);
+    napi_get_value_string_utf8(env, info[0], selectorHeap.get(), selectorLen + 1, nullptr);
+    selectorCStr = selectorHeap.get();
+  }
+  SEL selector = sel_registerName(selectorCStr);
 
   if (![objcObject respondsToSelector:selector]) {
     Napi::Error::New(env, "Selector not found on object")
@@ -93,7 +107,7 @@ Napi::Value ObjcObject::$MsgSend(const Napi::CallbackInfo &info) {
   if (providedArgCount != expectedArgCount) {
     std::string errorMessageStr =
         std::format("Selector {} (on {}) expected {} argument(s), but got {}",
-                    selectorName, std::string(object_getClassName(objcObject)),
+                    selectorCStr, std::string(object_getClassName(objcObject)),
                     expectedArgCount, providedArgCount);
     const char *errorMessage = errorMessageStr.c_str();
     Napi::Error::New(env, errorMessage).ThrowAsJavaScriptException();
@@ -132,8 +146,9 @@ Napi::Value ObjcObject::$MsgSend(const Napi::CallbackInfo &info) {
   // Store struct argument buffers to keep them alive until after invoke.
   std::vector<std::vector<uint8_t>> structBuffers;
 
-  // Hoist className string above loop to avoid repeated allocation per argument
+  // Hoist strings above loop to avoid repeated allocation per argument
   const std::string className(object_getClassName(objcObject));
+  const std::string selectorName(selectorCStr);
 
   for (size_t i = 1; i < info.Length(); ++i) {
     const ObjcArgumentContext context = {

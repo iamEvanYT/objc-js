@@ -134,8 +134,7 @@ Napi::Value CreateProtocolImplementation(const Napi::CallbackInfo &info) {
 
   // Store callbacks for this instance (we'll set the instance pointer later)
   ProtocolImplementation impl{
-      .callbacks = {},
-      .typeEncodings = {},
+      .methods = {},
       .className = className,
       .env = env,
       .js_thread = pthread_self(), // Store the current (JS) thread ID
@@ -215,10 +214,12 @@ Napi::Value CreateProtocolImplementation(const Napi::CallbackInfo &info) {
         [](Napi::Env) {}    // Finalizer (no context to clean up)
     );
 
-    // Store both the TSFN and the original JS function
-    impl.callbacks[selectorName] = tsfn;
-    impl.jsCallbacks[selectorName] = Napi::Persistent(jsCallback);
-    impl.typeEncodings[selectorName] = std::string(typeEncoding);
+    // Store method info (TSFN, JS callback, type encoding) in single map
+    impl.methods[selectorName] = ProtocolMethodInfo{
+        .tsfn = tsfn,
+        .jsCallback = Napi::Persistent(jsCallback),
+        .typeEncoding = std::string(typeEncoding),
+    };
   }
 
   // Override respondsToSelector

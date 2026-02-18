@@ -41,19 +41,17 @@ static void SubclassDeallocImplementation(id self, SEL _cmd);
 // MARK: - Subclass Method Forwarding Implementation
 
 static BOOL SubclassRespondsToSelector(id self, SEL _cmd, SEL selector) {
+  @autoreleasepool {
   Class cls = object_getClass(self);
   void *clsPtr = (__bridge void *)cls;
 
   bool found = SubclassManager::Instance().WithLock([clsPtr, selector](auto& map) {
     auto it = map.find(clsPtr);
     if (it != map.end()) {
-      NSString *selectorString = NSStringFromSelector(selector);
-      if (selectorString != nil) {
-        std::string selName = [selectorString UTF8String];
-        auto methodIt = it->second.methods.find(selName);
-        if (methodIt != it->second.methods.end()) {
-          return true;
-        }
+      std::string selName(sel_getName(selector));
+      auto methodIt = it->second.methods.find(selName);
+      if (methodIt != it->second.methods.end()) {
+        return true;
       }
     }
     return false;
@@ -69,6 +67,7 @@ static BOOL SubclassRespondsToSelector(id self, SEL _cmd, SEL selector) {
     return [superClass instancesRespondToSelector:selector];
   }
   return NO;
+  } // @autoreleasepool
 }
 
 static NSMethodSignature *SubclassMethodSignatureForSelector(id self, SEL _cmd,
@@ -79,8 +78,7 @@ static NSMethodSignature *SubclassMethodSignatureForSelector(id self, SEL _cmd,
   NSMethodSignature *sig = SubclassManager::Instance().WithLock([clsPtr, selector](auto& map) -> NSMethodSignature* {
     auto it = map.find(clsPtr);
     if (it != map.end()) {
-      NSString *selectorString = NSStringFromSelector(selector);
-      std::string selName = [selectorString UTF8String];
+      std::string selName(sel_getName(selector));
       auto methodIt = it->second.methods.find(selName);
       if (methodIt != it->second.methods.end()) {
         return [NSMethodSignature
@@ -104,6 +102,7 @@ static NSMethodSignature *SubclassMethodSignatureForSelector(id self, SEL _cmd,
 
 static void SubclassForwardInvocation(id self, SEL _cmd,
                                        NSInvocation *invocation) {
+  @autoreleasepool {
   if (!invocation) {
     NOBJC_ERROR("SubclassForwardInvocation called with nil invocation");
     return;
@@ -113,14 +112,7 @@ static void SubclassForwardInvocation(id self, SEL _cmd,
   [invocation retain];
 
   SEL selector = [invocation selector];
-  NSString *selectorString = NSStringFromSelector(selector);
-  if (!selectorString) {
-    NOBJC_ERROR("Failed to convert selector to string");
-    [invocation release];
-    return;
-  }
-
-  std::string selectorName = [selectorString UTF8String];
+  std::string selectorName(sel_getName(selector));
   NOBJC_LOG("SubclassForwardInvocation: Called for selector %s", selectorName.c_str());
 
   Class cls = object_getClass(self);
@@ -219,6 +211,7 @@ static void SubclassForwardInvocation(id self, SEL _cmd,
   };
 
   ForwardInvocationCommon(invocation, selectorName, clsPtr, callbacks);
+  } // @autoreleasepool
 }
 
 static void SubclassDeallocImplementation(id self, SEL _cmd) {
@@ -422,7 +415,7 @@ static Napi::Value CallSuperWithFFI(
     const Napi::CallbackInfo& info,
     size_t argStartIndex) {
   
-  std::string selectorName = NSStringFromSelector(selector).UTF8String;
+  std::string selectorName(sel_getName(selector));
   NOBJC_LOG("CallSuperWithFFI: selector=%s, self=%p, superClass=%s",
             selectorName.c_str(), self, class_getName(superClass));
   

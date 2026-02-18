@@ -42,14 +42,17 @@ struct InvocationData {
   void *superClassPtr;
 };
 
+// Information about a single protocol method (combines TSFN, JS callback, and type encoding)
+struct ProtocolMethodInfo {
+  Napi::ThreadSafeFunction tsfn;
+  Napi::FunctionReference jsCallback;
+  std::string typeEncoding;
+};
+
 // Stores information about a protocol implementation instance
 struct ProtocolImplementation {
-  // ThreadSafeFunction for each selector - allows calling JS from any thread
-  std::unordered_map<std::string, Napi::ThreadSafeFunction> callbacks;
-  // Original JS functions for direct calls (kept alive by persistent refs)
-  std::unordered_map<std::string, Napi::FunctionReference> jsCallbacks;
-  // Type encodings for each selector
-  std::unordered_map<std::string, std::string> typeEncodings;
+  // All method info keyed by selector name (single map replaces three)
+  std::unordered_map<std::string, ProtocolMethodInfo> methods;
   // Dynamically generated class name
   std::string className;
   // Store the environment for direct calls

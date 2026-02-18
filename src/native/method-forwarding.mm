@@ -20,6 +20,7 @@ using nobjc::ProtocolManager;
 // NOTE: This function takes ownership of data and must clean it up
 void CallJSCallback(Napi::Env env, Napi::Function jsCallback,
                     InvocationData *data) {
+  @autoreleasepool {
   // Use RAII to ensure cleanup even if we return early or throw
   // The guard will release the invocation and delete data
   InvocationDataGuard guard(data);
@@ -128,6 +129,7 @@ void CallJSCallback(Napi::Env env, Napi::Function jsCallback,
   NOBJC_LOG("CallJSCallback: Signaled completion for %s", data->selectorName.c_str());
 
   // guard destructor cleans up invocation and data
+  } // @autoreleasepool
 }
 
 // MARK: - Fallback Helper
@@ -174,19 +176,17 @@ bool FallbackToTSFN(Napi::ThreadSafeFunction &tsfn, InvocationData *data,
 
 // Override respondsToSelector to return YES for methods we implement
 BOOL RespondsToSelector(id self, SEL _cmd, SEL selector) {
+  @autoreleasepool {
   void *ptr = (__bridge void *)self;
 
   // Check if this is one of our implemented methods
   bool found = ProtocolManager::Instance().WithLock([ptr, selector](auto& map) {
     auto it = map.find(ptr);
     if (it != map.end()) {
-      NSString *selectorString = NSStringFromSelector(selector);
-      if (selectorString != nil) {
-        std::string selName = [selectorString UTF8String];
-        auto callbackIt = it->second.callbacks.find(selName);
-        if (callbackIt != it->second.callbacks.end()) {
-          return true;
-        }
+      std::string selName(sel_getName(selector));
+      auto methodIt = it->second.methods.find(selName);
+      if (methodIt != it->second.methods.end()) {
+        return true;
       }
     }
     return false;
@@ -199,6 +199,7 @@ BOOL RespondsToSelector(id self, SEL _cmd, SEL selector) {
   // For methods we don't implement, check if NSObject responds to them
   // This handles standard NSObject methods like description, isEqual:, etc.
   return [NSObject instancesRespondToSelector:selector];
+  } // @autoreleasepool
 }
 
 // Provide method signature for message forwarding
@@ -208,11 +209,10 @@ NSMethodSignature *MethodSignatureForSelector(id self, SEL _cmd, SEL selector) {
   NSMethodSignature *sig = ProtocolManager::Instance().WithLock([ptr, selector](auto& map) -> NSMethodSignature* {
     auto it = map.find(ptr);
     if (it != map.end()) {
-      NSString *selectorString = NSStringFromSelector(selector);
-      std::string selName = [selectorString UTF8String];
-      auto encIt = it->second.typeEncodings.find(selName);
-      if (encIt != it->second.typeEncodings.end()) {
-        return [NSMethodSignature signatureWithObjCTypes:encIt->second.c_str()];
+      std::string selName(sel_getName(selector));
+      auto methodIt = it->second.methods.find(selName);
+      if (methodIt != it->second.methods.end()) {
+        return [NSMethodSignature signatureWithObjCTypes:methodIt->second.typeEncoding.c_str()];
       }
     }
     return nil;
@@ -227,6 +227,7 @@ NSMethodSignature *MethodSignatureForSelector(id self, SEL _cmd, SEL selector) {
 
 // Handle forwarded invocations
 void ForwardInvocation(id self, SEL _cmd, NSInvocation *invocation) {
+  @autoreleasepool {
   if (!invocation) {
     NOBJC_ERROR("ForwardInvocation called with nil invocation");
     return;
@@ -237,14 +238,8 @@ void ForwardInvocation(id self, SEL _cmd, NSInvocation *invocation) {
   [invocation retain];
 
   SEL selector = [invocation selector];
-  NSString *selectorString = NSStringFromSelector(selector);
-  if (!selectorString) {
-    NOBJC_ERROR("Failed to convert selector to string");
-    [invocation release];
-    return;
-  }
+  std::string selectorName(sel_getName(selector));
 
-  std::string selectorName = [selectorString UTF8String];
   void *ptr = (__bridge void *)self;
 
   // Set up callbacks for protocol-specific storage access
@@ -261,14 +256,14 @@ void ForwardInvocation(id self, SEL _cmd, NSInvocation *invocation) {
         return std::nullopt;
       }
 
-      auto callbackIt = it->second.callbacks.find(selName);
-      if (callbackIt == it->second.callbacks.end()) {
+      auto methodIt = it->second.methods.find(selName);
+      if (methodIt == it->second.methods.end()) {
         NOBJC_WARN("Callback not found for selector %s", selName.c_str());
         return std::nullopt;
       }
 
       // Acquire the TSFN
-      Napi::ThreadSafeFunction tsfn = callbackIt->second;
+      Napi::ThreadSafeFunction tsfn = methodIt->second.tsfn;
       napi_status acq_status = tsfn.Acquire();
       if (acq_status != napi_ok) {
         NOBJC_WARN("Failed to acquire ThreadSafeFunction for selector %s", selName.c_str());
@@ -284,15 +279,8 @@ void ForwardInvocation(id self, SEL _cmd, NSInvocation *invocation) {
       ctx.superClassPtr = nullptr; // Not used for protocols
 
       // Cache the JS callback reference to avoid mutex re-acquisition
-      auto jsCallbackIt = it->second.jsCallbacks.find(selName);
-      if (jsCallbackIt != it->second.jsCallbacks.end()) {
-        ctx.cachedJsCallback = &jsCallbackIt->second;
-      }
-
-      auto encIt = it->second.typeEncodings.find(selName);
-      if (encIt != it->second.typeEncodings.end()) {
-        ctx.typeEncoding = encIt->second;
-      }
+      ctx.cachedJsCallback = &methodIt->second.jsCallback;
+      ctx.typeEncoding = methodIt->second.typeEncoding;
 
       return ctx;
     });
@@ -307,12 +295,12 @@ void ForwardInvocation(id self, SEL _cmd, NSInvocation *invocation) {
         return Napi::Function();
       }
 
-      auto jsCallbackIt = it->second.jsCallbacks.find(selName);
-      if (jsCallbackIt == it->second.jsCallbacks.end()) {
+      auto methodIt = it->second.methods.find(selName);
+      if (methodIt == it->second.methods.end()) {
         return Napi::Function();
       }
 
-      return jsCallbackIt->second.Value();
+      return methodIt->second.jsCallback.Value();
     });
   };
 
@@ -325,12 +313,12 @@ void ForwardInvocation(id self, SEL _cmd, NSInvocation *invocation) {
         return std::nullopt;
       }
 
-      auto callbackIt = it->second.callbacks.find(selName);
-      if (callbackIt == it->second.callbacks.end()) {
+      auto methodIt = it->second.methods.find(selName);
+      if (methodIt == it->second.methods.end()) {
         return std::nullopt;
       }
 
-      Napi::ThreadSafeFunction tsfn = callbackIt->second;
+      Napi::ThreadSafeFunction tsfn = methodIt->second.tsfn;
       napi_status acq_status = tsfn.Acquire();
       if (acq_status != napi_ok) {
         return std::nullopt;
@@ -341,6 +329,7 @@ void ForwardInvocation(id self, SEL _cmd, NSInvocation *invocation) {
   };
 
   ForwardInvocationCommon(invocation, selectorName, ptr, callbacks);
+  } // @autoreleasepool
 }
 
 // Deallocation implementation
@@ -354,13 +343,11 @@ void DeallocImplementation(id self, SEL _cmd) {
         // Release all ThreadSafeFunctions and JS callbacks
         // Do this carefully to avoid issues during shutdown
         try {
-          for (auto &pair : it->second.callbacks) {
+          for (auto &pair : it->second.methods) {
             // Release the ThreadSafeFunction
-            pair.second.Release();
+            pair.second.tsfn.Release();
           }
-          it->second.callbacks.clear();
-          it->second.jsCallbacks.clear();
-          it->second.typeEncodings.clear();
+          it->second.methods.clear();
         } catch (...) {
           // Ignore errors during cleanup
           NOBJC_WARN("Exception during callback cleanup for instance %p", self);

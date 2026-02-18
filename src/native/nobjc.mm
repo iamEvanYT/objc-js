@@ -21,6 +21,7 @@ Napi::Value LoadLibrary(const Napi::CallbackInfo &info) {
 
 Napi::Value GetClassObject(const Napi::CallbackInfo &info) {
   Napi::Env env = info.Env();
+  @autoreleasepool {
   if (info.Length() != 1 || !info[0].IsString()) {
     throw Napi::TypeError::New(env, "Expected a single string argument");
   }
@@ -31,6 +32,7 @@ Napi::Value GetClassObject(const Napi::CallbackInfo &info) {
     return env.Undefined();
   }
   return ObjcObject::NewInstance(env, cls);
+  } // @autoreleasepool
 }
 
 Napi::Value GetPointer(const Napi::CallbackInfo &info) {

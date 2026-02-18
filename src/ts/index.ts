@@ -13,6 +13,9 @@ import { NobjcNative } from "./native.js";
 const customInspectSymbol = Symbol.for("nodejs.util.inspect.custom");
 const NATIVE_OBJC_OBJECT = Symbol("nativeObjcObject");
 
+// WeakMap side-channel for O(1) proxy → native object lookup (bypasses Proxy traps)
+const nativeObjectMap = new WeakMap<object, NobjcNative.ObjcObject>();
+
 // Module-scope Set for O(1) lookup instead of per-access array with O(n) .includes()
 const BUILT_IN_PROPS = new Set([
   "constructor",
@@ -34,14 +37,19 @@ const methodCache = new WeakMap<NobjcNative.ObjcObject, Map<string, NobjcMethod>
 class NobjcLibrary {
   [key: string]: NobjcObject;
   constructor(library: string) {
+    const classCache = new Map<string, NobjcObject>();
     const handler: ProxyHandler<any> & { wasLoaded: boolean } = {
       wasLoaded: false,
       get(_, className: string) {
+        let cls = classCache.get(className);
+        if (cls) return cls;
         if (!this.wasLoaded) {
           LoadLibrary(library);
           this.wasLoaded = true;
         }
-        return new NobjcObject(GetClassObject(className));
+        cls = new NobjcObject(GetClassObject(className));
+        classCache.set(className, cls);
+        return cls;
       }
     };
     return new Proxy({}, handler);
@@ -101,10 +109,6 @@ class NobjcObject {
           return Reflect.get(target, methodName);
         }
 
-        if (!(methodName in receiver)) {
-          throw new Error(`Method ${methodName} not found on object ${receiver}`);
-        }
-
         // Return cached method proxy if available, otherwise create and cache
         let cache = methodCache.get(object);
         if (!cache) {
@@ -113,6 +117,12 @@ class NobjcObject {
         }
         let method = cache.get(methodName);
         if (!method) {
+          // Check respondsToSelector on cache miss only, directly on native
+          // object (avoids triggering proxy 'has' trap which would be a second FFI call)
+          const selector = NobjcMethodNameToObjcSelector(methodName);
+          if (!target.$msgSend("respondsToSelector:", selector)) {
+            throw new Error(`Method ${methodName} not found on object`);
+          }
           method = NobjcMethod(object, methodName);
           cache.set(methodName, method);
         }
@@ -123,6 +133,9 @@ class NobjcObject {
     // Create the proxy
     const proxy = new Proxy<NobjcNative.ObjcObject>(object, handler) as unknown as NobjcObject;
 
+    // Store proxy → native mapping in WeakMap for O(1) unwrap (bypasses Proxy traps)
+    nativeObjectMap.set(proxy as unknown as object, object);
+
     // This is used to override the default inspect behavior for the object. (console.log)
     (object as any)[customInspectSymbol] = () => proxy.toString();
 
@@ -132,8 +145,8 @@ class NobjcObject {
 }
 
 function unwrapArg(arg: any): any {
-  if (arg && typeof arg === "object" && NATIVE_OBJC_OBJECT in arg) {
-    return arg[NATIVE_OBJC_OBJECT];
+  if (arg && typeof arg === "object") {
+    return nativeObjectMap.get(arg) ?? arg;
   }
   return arg;
 }
@@ -208,9 +221,9 @@ class NobjcProtocol {
  * ```
  */
 function getPointer(obj: NobjcObject): Buffer {
-  // Unwrap the NobjcObject to get the native ObjcObject
-  if (obj && typeof obj === "object" && NATIVE_OBJC_OBJECT in obj) {
-    const nativeObj = (obj as any)[NATIVE_OBJC_OBJECT];
+  // Unwrap the NobjcObject to get the native ObjcObject via WeakMap
+  const nativeObj = nativeObjectMap.get(obj as unknown as object);
+  if (nativeObj) {
     return GetPointer(nativeObj);
   }
   throw new TypeError("Argument must be a NobjcObject instance");
