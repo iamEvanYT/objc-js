@@ -45,8 +45,8 @@ describe("JavaScript Code Tests", () => {
     expect(isProxy(str)).toBe(true);
   });
 
-  test("should have UTF8String method as proxy", () => {
+  test("should have UTF8String method as function", () => {
     const str = NSString.stringWithUTF8String$("Hello, Objective-C!");
-    expect(isProxy(str.UTF8String)).toBe(true);
+    expect(typeof str.UTF8String).toBe("function");
   });
 });

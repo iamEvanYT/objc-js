@@ -23,6 +23,7 @@
 #include "type-conversion.h"
 #include <Foundation/Foundation.h>
 #include <map>
+#include <unordered_map>
 #include <napi.h>
 #include <objc/runtime.h>
 #include <string>
@@ -37,7 +38,7 @@
  * field1, etc.
  */
 // clang-format off
-static const std::map<std::string, std::vector<std::string>> KNOWN_STRUCT_FIELDS = {
+static const std::unordered_map<std::string, std::vector<std::string>> KNOWN_STRUCT_FIELDS = {
   // CoreGraphics / AppKit geometry
   {"CGPoint",            {"x", "y"}},
   {"NSPoint",            {"x", "y"}},
@@ -273,6 +274,24 @@ inline ParsedStructType ParseStructEncodingWithNames(const char *encoding) {
   return result;
 }
 
+// MARK: - Cached Struct Encoding Lookup
+
+/**
+ * Return a cached ParsedStructType for the given encoding string.
+ * Avoids re-parsing identical struct type encodings (CGRect, NSRange, etc.)
+ * on every struct argument or return value.
+ */
+inline const ParsedStructType& GetOrParseStructEncoding(const char *encoding) {
+  static std::unordered_map<std::string, ParsedStructType> cache;
+  std::string key(encoding);
+  auto it = cache.find(key);
+  if (it != cache.end()) {
+    return it->second;
+  }
+  auto [inserted_it, _] = cache.emplace(key, ParseStructEncodingWithNames(encoding));
+  return inserted_it->second;
+}
+
 // MARK: - JS Object → Struct Buffer (for arguments)
 
 /**
@@ -506,7 +525,7 @@ inline bool IsStructTypeEncoding(const char *typeEncoding) {
 inline std::vector<uint8_t>
 PackJSValueAsStruct(Napi::Env env, const Napi::Value &jsValue,
                     const char *typeEncoding) {
-  ParsedStructType parsed = ParseStructEncodingWithNames(typeEncoding);
+  const ParsedStructType &parsed = GetOrParseStructEncoding(typeEncoding);
 
   if (parsed.fields.empty()) {
     throw Napi::Error::New(
@@ -522,9 +541,9 @@ PackJSValueAsStruct(Napi::Env env, const Napi::Value &jsValue,
  * Unpack a struct byte buffer into a JS object.
  */
 inline Napi::Value UnpackStructToJSValue(Napi::Env env,
-                                         const uint8_t *buffer,
-                                         const char *typeEncoding) {
-  ParsedStructType parsed = ParseStructEncodingWithNames(typeEncoding);
+                                          const uint8_t *buffer,
+                                          const char *typeEncoding) {
+  const ParsedStructType &parsed = GetOrParseStructEncoding(typeEncoding);
 
   if (parsed.fields.empty()) {
     NOBJC_ERROR("UnpackStructToJSValue: Failed to parse struct encoding '%s'",

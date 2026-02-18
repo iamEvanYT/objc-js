@@ -5,7 +5,26 @@
 #include <Foundation/Foundation.h>
 #include <napi.h>
 #include <objc/objc.h>
+#include <unordered_map>
 #include <vector>
+
+// MARK: - Method Signature Cache
+
+/**
+ * Cache for method signatures keyed by (Class, SEL) pair.
+ * Avoids redundant ObjC runtime calls for repeated $msgSend invocations
+ * on the same class/selector pair.
+ */
+struct ClassSELHash {
+  size_t operator()(const std::pair<Class, SEL> &p) const {
+    auto h1 = std::hash<void *>{}((__bridge void *)p.first);
+    auto h2 = std::hash<void *>{}(p.second);
+    return h1 ^ (h2 << 1);
+  }
+};
+
+static std::unordered_map<std::pair<Class, SEL>, NSMethodSignature *, ClassSELHash>
+    methodSignatureCache;
 
 Napi::FunctionReference ObjcObject::constructor;
 
@@ -47,8 +66,18 @@ Napi::Value ObjcObject::$MsgSend(const Napi::CallbackInfo &info) {
     return env.Null();
   }
 
-  NSMethodSignature *methodSignature =
-      [objcObject methodSignatureForSelector:selector];
+  // Use cached method signature to avoid redundant ObjC runtime calls
+  auto cacheKey = std::make_pair(object_getClass(objcObject), selector);
+  auto cacheIt = methodSignatureCache.find(cacheKey);
+  NSMethodSignature *methodSignature;
+  if (cacheIt != methodSignatureCache.end()) {
+    methodSignature = cacheIt->second;
+  } else {
+    methodSignature = [objcObject methodSignatureForSelector:selector];
+    if (methodSignature != nil) {
+      methodSignatureCache[cacheKey] = methodSignature;
+    }
+  }
   if (methodSignature == nil) {
     Napi::Error::New(env, "Failed to get method signature")
         .ThrowAsJavaScriptException();
@@ -103,9 +132,12 @@ Napi::Value ObjcObject::$MsgSend(const Napi::CallbackInfo &info) {
   // Store struct argument buffers to keep them alive until after invoke.
   std::vector<std::vector<uint8_t>> structBuffers;
 
+  // Hoist className string above loop to avoid repeated allocation per argument
+  const std::string className(object_getClassName(objcObject));
+
   for (size_t i = 1; i < info.Length(); ++i) {
     const ObjcArgumentContext context = {
-        .className = std::string(object_getClassName(objcObject)),
+        .className = className,
         .selectorName = selectorName,
         .argumentIndex = (int)i - 1,
     };

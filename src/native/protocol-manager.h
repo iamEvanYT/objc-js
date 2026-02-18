@@ -25,6 +25,7 @@
 #include "protocol-storage.h"
 #include <functional>
 #include <mutex>
+#include <shared_mutex>
 #include <optional>
 #include <unordered_map>
 
@@ -60,7 +61,7 @@ public:
    * @note Caller must NOT hold the lock. This method acquires the lock.
    */
   ProtocolImplementation* Find(void* instancePtr) {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::shared_lock<std::shared_mutex> lock(mutex_);
     auto it = implementations_.find(instancePtr);
     if (it != implementations_.end()) {
       return &it->second;
@@ -74,7 +75,7 @@ public:
    * @param impl The implementation to register (moved).
    */
   void Register(void* instancePtr, ProtocolImplementation&& impl) {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::unique_lock<std::shared_mutex> lock(mutex_);
     implementations_.emplace(instancePtr, std::move(impl));
   }
 
@@ -84,7 +85,7 @@ public:
    * @return true if the implementation was found and removed, false otherwise.
    */
   bool Unregister(void* instancePtr) {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::unique_lock<std::shared_mutex> lock(mutex_);
     return implementations_.erase(instancePtr) > 0;
   }
 
@@ -98,7 +99,7 @@ public:
   template <typename Callback>
   auto WithLock(Callback&& callback)
       -> decltype(callback(std::declval<std::unordered_map<void*, ProtocolImplementation>&>())) {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::unique_lock<std::shared_mutex> lock(mutex_);
     return callback(implementations_);
   }
 
@@ -109,7 +110,7 @@ public:
   template <typename Callback>
   auto WithLockConst(Callback&& callback) const
       -> decltype(callback(std::declval<const std::unordered_map<void*, ProtocolImplementation>&>())) {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::shared_lock<std::shared_mutex> lock(mutex_);
     return callback(implementations_);
   }
 
@@ -118,7 +119,7 @@ public:
    * @return Count of implementations.
    */
   size_t Size() const {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::shared_lock<std::shared_mutex> lock(mutex_);
     return implementations_.size();
   }
 
@@ -128,7 +129,7 @@ public:
    * @return true if registered, false otherwise.
    */
   bool Contains(void* instancePtr) const {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::shared_lock<std::shared_mutex> lock(mutex_);
     return implementations_.find(instancePtr) != implementations_.end();
   }
 
@@ -136,7 +137,7 @@ private:
   ProtocolManager() = default;
   ~ProtocolManager() = default;
 
-  mutable std::mutex mutex_;
+  mutable std::shared_mutex mutex_;
   std::unordered_map<void*, ProtocolImplementation> implementations_;
 };
 

@@ -13,6 +13,24 @@ import { NobjcNative } from "./native.js";
 const customInspectSymbol = Symbol.for("nodejs.util.inspect.custom");
 const NATIVE_OBJC_OBJECT = Symbol("nativeObjcObject");
 
+// Module-scope Set for O(1) lookup instead of per-access array with O(n) .includes()
+const BUILT_IN_PROPS = new Set([
+  "constructor",
+  "valueOf",
+  "hasOwnProperty",
+  "isPrototypeOf",
+  "propertyIsEnumerable",
+  "toLocaleString",
+  "__proto__",
+  "__defineGetter__",
+  "__defineSetter__",
+  "__lookupGetter__",
+  "__lookupSetter__"
+]);
+
+// WeakMap cache for NobjcMethod proxies per object to avoid GC pressure
+const methodCache = new WeakMap<NobjcNative.ObjcObject, Map<string, NobjcMethod>>();
+
 class NobjcLibrary {
   [key: string]: NobjcObject;
   constructor(library: string) {
@@ -78,28 +96,27 @@ class NobjcObject {
           return () => String(wrapObjCObjectIfNeeded(object.$msgSend("description")));
         }
 
-        // handle other built-in Object.prototype properties
-        const builtInProps = [
-          "constructor",
-          "valueOf",
-          "hasOwnProperty",
-          "isPrototypeOf",
-          "propertyIsEnumerable",
-          "toLocaleString",
-          "__proto__",
-          "__defineGetter__",
-          "__defineSetter__",
-          "__lookupGetter__",
-          "__lookupSetter__"
-        ];
-        if (builtInProps.includes(methodName)) {
+        // handle other built-in Object.prototype properties (O(1) Set lookup)
+        if (BUILT_IN_PROPS.has(methodName)) {
           return Reflect.get(target, methodName);
         }
 
         if (!(methodName in receiver)) {
           throw new Error(`Method ${methodName} not found on object ${receiver}`);
         }
-        return NobjcMethod(object, methodName);
+
+        // Return cached method proxy if available, otherwise create and cache
+        let cache = methodCache.get(object);
+        if (!cache) {
+          cache = new Map();
+          methodCache.set(object, cache);
+        }
+        let method = cache.get(methodName);
+        if (!method) {
+          method = NobjcMethod(object, methodName);
+          cache.set(methodName, method);
+        }
+        return method;
       }
     };
 
@@ -132,18 +149,19 @@ interface NobjcMethod {
   (...args: any[]): any;
 }
 
-// Note: This is actually a factory function that returns a callable Proxy
+// Note: This is actually a factory function that returns a callable function
 const NobjcMethod = function (object: NobjcNative.ObjcObject, methodName: string): NobjcMethod {
   const selector = NobjcMethodNameToObjcSelector(methodName);
 
-  // This cannot be an arrow function because we need to access `arguments`.
-  function methodFunc(): any {
-    const unwrappedArgs = Array.from(arguments).map(unwrapArg);
-    const result = object.$msgSend(selector, ...unwrappedArgs);
-    return wrapObjCObjectIfNeeded(result);
+  // Use rest params to avoid Array.from(arguments) + .map() double allocation
+  function methodFunc(...args: any[]): any {
+    for (let i = 0; i < args.length; i++) {
+      args[i] = unwrapArg(args[i]);
+    }
+    return wrapObjCObjectIfNeeded(object.$msgSend(selector, ...args));
   }
-  const handler: ProxyHandler<any> = {};
-  return new Proxy(methodFunc, handler) as NobjcMethod;
+  // Return the function directly — no Proxy wrapper needed (handler was empty)
+  return methodFunc as NobjcMethod;
 };
 
 class NobjcProtocol {
