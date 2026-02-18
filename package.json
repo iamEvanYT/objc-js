@@ -36,6 +36,7 @@
     "test:string-lifetime": "bun test tests/test-string-lifetime.test.ts",
     "test:object-arguments": "bun test tests/test-object-arguments.test.ts",
     "test:protocol-implementation": "bun test tests/test-protocol-implementation.test.ts",
+    "bench": "bun run build && bun run benchmarks/bench.ts",
     "make-clangd-config": "node ./scripts/make-clangd-config.js",
     "format": "prettier --write \"**/*.{ts,js,json,md}\"",
     "preinstall-disabled": "npm run build-scripts && npm run make-clangd-config",
