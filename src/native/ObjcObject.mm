@@ -6,6 +6,7 @@
 #include <napi.h>
 #include <objc/objc.h>
 #include <memory>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
@@ -137,24 +138,30 @@ Napi::Value ObjcObject::$MsgSend(const Napi::CallbackInfo &info) {
   [invocation setTarget:objcObject];
 
   // Store all arguments to keep them alive until after invoke.
-  // This is critical for string arguments where we pass a pointer to the
-  // internal buffer of a std::string - if the string is destroyed before
-  // invoke, the pointer becomes dangling.
-  std::vector<ObjcType> storedArgs;
-  storedArgs.reserve(info.Length() - 1);
+  // Small-buffer optimization: stack-allocate for common case (<=4 args),
+  // fall back to heap vector for larger argument counts.
+  constexpr size_t kSmallArgCount = 4;
+  ObjcType smallArgBuf[kSmallArgCount];
+  std::vector<ObjcType> heapArgBuf;
+  const bool useHeap = expectedArgCount > kSmallArgCount;
+  if (useHeap) {
+    heapArgBuf.reserve(expectedArgCount);
+  }
 
   // Store struct argument buffers to keep them alive until after invoke.
   std::vector<std::vector<uint8_t>> structBuffers;
 
-  // Hoist strings above loop to avoid repeated allocation per argument
-  const std::string className(object_getClassName(objcObject));
-  const std::string selectorName(selectorCStr);
+  // Use raw const char* / string_view to avoid heap allocation per call
+  // (strings are only needed for error messages, which are rare)
+  const char* classNameCStr = object_getClassName(objcObject);
+  std::string_view selectorView(selectorCStr);
 
   for (size_t i = 1; i < info.Length(); ++i) {
+    const size_t argIdx = i - 1;
     const ObjcArgumentContext context = {
-        .className = className,
-        .selectorName = selectorName,
-        .argumentIndex = (int)i - 1,
+        .className = classNameCStr,
+        .selectorName = selectorView,
+        .argumentIndex = (int)argIdx,
     };
     const char *typeEncoding =
         SimplifyTypeEncoding([methodSignature getArgumentTypeAtIndex:i + 1]);
@@ -164,8 +171,12 @@ Napi::Value ObjcObject::$MsgSend(const Napi::CallbackInfo &info) {
       auto buffer = PackJSValueAsStruct(env, info[i], typeEncoding);
       [invocation setArgument:buffer.data() atIndex:i + 1];
       structBuffers.push_back(std::move(buffer));
-      // Push a placeholder into storedArgs to keep indices aligned
-      storedArgs.push_back(BaseObjcType{std::monostate{}});
+      // Push a placeholder to keep indices aligned
+      if (useHeap) {
+        heapArgBuf.push_back(BaseObjcType{std::monostate{}});
+      } else {
+        smallArgBuf[argIdx] = BaseObjcType{std::monostate{}};
+      }
       continue;
     }
 
@@ -177,7 +188,12 @@ Napi::Value ObjcObject::$MsgSend(const Napi::CallbackInfo &info) {
       Napi::TypeError::New(env, errorMessage).ThrowAsJavaScriptException();
       return env.Null();
     }
-    storedArgs.push_back(std::move(*arg));
+    if (useHeap) {
+      heapArgBuf.push_back(std::move(*arg));
+    } else {
+      smallArgBuf[argIdx] = std::move(*arg);
+    }
+    ObjcType& stored = useHeap ? heapArgBuf.back() : smallArgBuf[argIdx];
     std::visit(
         [&](auto &&outer) {
           using OuterT = std::decay_t<decltype(outer)>;
@@ -188,11 +204,11 @@ Napi::Value ObjcObject::$MsgSend(const Napi::CallbackInfo &info) {
               std::visit(SetObjCArgumentVisitor{invocation, i + 1}, *outer);
           }
         },
-        storedArgs.back());
+        stored);
   }
 
   [invocation invoke];
-  // storedArgs and structBuffers go out of scope here, after invoke
+  // smallArgBuf/heapArgBuf and structBuffers go out of scope here, after invoke
 
   if (isStructReturn) {
     // Struct return: read bytes from invocation and convert to JS object

@@ -166,7 +166,7 @@ This matches the pattern already used in `SubclassImplementation::methods`.
 
 ## MEDIUM IMPACT
 
-### 8. Specialize `NobjcMethod` for common argument counts
+### 8. Specialize `NobjcMethod` for common argument counts — DONE
 
 **File:** `src/ts/index.ts:157,161`
 
@@ -190,7 +190,7 @@ function methodFunc(...args: any[]): any {
 }
 ```
 
-### 9. Cache `toString` function and capability check
+### 9. Cache `toString` function and capability check — DONE
 
 **File:** `src/ts/index.ts:90-97`
 
@@ -217,7 +217,7 @@ if (methodName === "toString") {
 }
 ```
 
-### 10. Mutate args in-place in protocol/class callbacks
+### 10. Mutate args in-place in protocol/class callbacks — DONE
 
 **Files:** `src/ts/index.ts:176,368,424`
 
@@ -243,7 +243,7 @@ convertedMethods[selector] = function (...args: any[]) {
 
 Same for `NobjcClass.define` (line 368) and `NobjcClass.super` (line 424).
 
-### 11. Move `customInspectSymbol` into Proxy `get` trap
+### 11. Move `customInspectSymbol` into Proxy `get` trap — DONE
 
 **File:** `src/ts/index.ts:127`
 
@@ -258,7 +258,7 @@ if (methodName === customInspectSymbol) {
 }
 ```
 
-### 12. Use small-buffer optimization for `storedArgs`
+### 12. Use small-buffer optimization for `storedArgs` — DONE
 
 **File:** `src/native/ObjcObject.mm:129-133`
 
@@ -278,7 +278,7 @@ auto& storedArgs = (expectedArgCount <= kSmallArgCount)
 
 Alternatively, use a `llvm::SmallVector`-style container if available, or a simple inline buffer wrapper.
 
-### 13. Defer `className` construction to error path only
+### 13. Defer `className` construction to error path only — DONE
 
 **File:** `src/native/ObjcObject.mm:136`
 
@@ -297,7 +297,7 @@ const char* classNameCStr = object_getClassName(objcObject);
 
 This requires changing `ObjcArgumentContext::className` from `std::string` to `const char*` or `std::string_view` (see item 14).
 
-### 14. Use `string_view` in `ObjcArgumentContext`
+### 14. Use `string_view` in `ObjcArgumentContext` — DONE
 
 **File:** `src/native/bridge.h:68-72`
 
@@ -323,7 +323,7 @@ struct ObjcArgumentContext {
 
 Combined with item 13, this eliminates all string copies in the argument loop.
 
-### 15. Reduce lock acquisitions per forwarded invocation
+### 15. Reduce lock acquisitions per forwarded invocation — DONE
 
 **Files:** `method-forwarding.mm:180,208,255-341`, `subclass-impl.mm:47,79,142`
 
@@ -340,7 +340,7 @@ objc_setAssociatedObject(self, selector, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC
 
 Alternatively, combine `RespondsToSelector` + `MethodSignatureForSelector` into a single locked lookup that returns both pieces of information.
 
-### 16. Use `shared_mutex` for `SubclassManager`
+### 16. Use `shared_mutex` for `SubclassManager` — DONE
 
 **File:** `src/native/subclass-manager.h:164`
 
@@ -348,7 +348,7 @@ Alternatively, combine `RespondsToSelector` + `MethodSignatureForSelector` into 
 
 **Proposed change:** Change to `std::shared_mutex` with `shared_lock` for reads, matching the pattern already used in `ProtocolManager`.
 
-### 17. Use `WithLockConst` for read-only ProtocolManager lookups
+### 17. Use `WithLockConst` for read-only ProtocolManager lookups — DONE
 
 **Files:** `method-forwarding.mm:180,208`
 
@@ -558,16 +558,16 @@ std::unordered_map<std::string, MethodInfo, StringHash, StringEqual> methods;
 | 5   | C++  | High   | Low     | ✅     | Stack-allocate selector string in `$MsgSend`              |
 | 6   | C++  | High   | Low     | ✅     | Replace `NSStringFromSelector` with `sel_getName`         |
 | 7   | C++  | High   | Medium  | ✅     | Combine `ProtocolImplementation`'s three maps into one    |
-| 8   | TS   | Medium | Low     |        | Specialize `NobjcMethod` for common argument counts       |
-| 9   | TS   | Medium | Low     |        | Cache `toString` function and capability check            |
-| 10  | TS   | Medium | Trivial |        | Mutate args in-place in protocol/class callbacks          |
-| 11  | TS   | Medium | Trivial |        | Move `customInspectSymbol` into Proxy `get` trap          |
-| 12  | C++  | Medium | Medium  |        | Use small-buffer optimization for `storedArgs`            |
-| 13  | C++  | Medium | Trivial |        | Defer `className` construction to error path only         |
-| 14  | C++  | Medium | Low     |        | Use `string_view` in `ObjcArgumentContext`                |
-| 15  | C++  | Medium | Medium  |        | Reduce lock acquisitions per forwarded invocation         |
-| 16  | C++  | Medium | Low     |        | Use `shared_mutex` for `SubclassManager`                  |
-| 17  | C++  | Medium | Trivial |        | Use `WithLockConst` for read-only ProtocolManager lookups |
+| 8   | TS   | Medium | Low     | ✅     | Specialize `NobjcMethod` for common argument counts       |
+| 9   | TS   | Medium | Low     | ✅     | Cache `toString` function and capability check            |
+| 10  | TS   | Medium | Trivial | ✅     | Mutate args in-place in protocol/class callbacks          |
+| 11  | TS   | Medium | Trivial | ✅     | Move `customInspectSymbol` into Proxy `get` trap          |
+| 12  | C++  | Medium | Medium  | ✅     | Use small-buffer optimization for `storedArgs`            |
+| 13  | C++  | Medium | Trivial | ✅     | Defer `className` construction to error path only         |
+| 14  | C++  | Medium | Low     | ✅     | Use `string_view` in `ObjcArgumentContext`                |
+| 15  | C++  | Medium | Medium  | ✅     | Reduce lock acquisitions per forwarded invocation         |
+| 16  | C++  | Medium | Low     | ✅     | Use `shared_mutex` for `SubclassManager`                  |
+| 17  | C++  | Medium | Trivial | ✅     | Use `WithLockConst` for read-only ProtocolManager lookups |
 | 18  | TS   | Low    | Trivial |        | Remove redundant `p.toString()` in `has` trap             |
 | 19  | TS   | Low    | Trivial |        | Extract `try/catch` from `has` trap hot path              |
 | 20  | TS   | Low    | Trivial |        | Use `replaceAll` with string arg instead of RegExp        |

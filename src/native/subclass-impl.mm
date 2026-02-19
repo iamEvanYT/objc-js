@@ -45,12 +45,14 @@ static BOOL SubclassRespondsToSelector(id self, SEL _cmd, SEL selector) {
   Class cls = object_getClass(self);
   void *clsPtr = (__bridge void *)cls;
 
-  bool found = SubclassManager::Instance().WithLock([clsPtr, selector](auto& map) {
+  bool found = SubclassManager::Instance().WithLockConst([clsPtr, selector](const auto& map) {
     auto it = map.find(clsPtr);
     if (it != map.end()) {
       std::string selName(sel_getName(selector));
       auto methodIt = it->second.methods.find(selName);
       if (methodIt != it->second.methods.end()) {
+        // Cache type encoding for subsequent SubclassMethodSignatureForSelector call
+        GetForwardingCache().store(clsPtr, selector, methodIt->second.typeEncoding.c_str());
         return true;
       }
     }
@@ -75,7 +77,17 @@ static NSMethodSignature *SubclassMethodSignatureForSelector(id self, SEL _cmd,
   Class cls = object_getClass(self);
   void *clsPtr = (__bridge void *)cls;
 
-  NSMethodSignature *sig = SubclassManager::Instance().WithLock([clsPtr, selector](auto& map) -> NSMethodSignature* {
+  // Check forwarding pipeline cache first (populated by SubclassRespondsToSelector)
+  auto& cache = GetForwardingCache();
+  if (cache.matches(clsPtr, selector)) {
+    NSMethodSignature *sig = [NSMethodSignature signatureWithObjCTypes:cache.typeEncoding];
+    cache.invalidate();
+    if (sig != nil) {
+      return sig;
+    }
+  }
+
+  NSMethodSignature *sig = SubclassManager::Instance().WithLockConst([clsPtr, selector](const auto& map) -> NSMethodSignature* {
     auto it = map.find(clsPtr);
     if (it != map.end()) {
       std::string selName(sel_getName(selector));
@@ -497,7 +509,7 @@ static Class FindSuperClass(id self) {
   while (cls != nil) {
     void *clsPtr = (__bridge void *)cls;
     
-    Class superClass = SubclassManager::Instance().WithLock([clsPtr](auto& map) -> Class {
+    Class superClass = SubclassManager::Instance().WithLockConst([clsPtr](const auto& map) -> Class {
       auto it = map.find(clsPtr);
       if (it != map.end()) {
         return (__bridge Class)it->second.superClass;

@@ -3,6 +3,7 @@
 
 #include "memory-utils.h"
 #include "protocol-storage.h"
+#include <cstring>
 #include <functional>
 #include <napi.h>
 #include <optional>
@@ -12,6 +13,42 @@
 #else
 typedef struct NSInvocation NSInvocation;
 #endif
+
+// MARK: - Forwarding Pipeline Cache
+
+/**
+ * Thread-local cache to avoid redundant lock acquisition in the
+ * RespondsToSelector -> MethodSignatureForSelector pipeline.
+ *
+ * A single forwarded call triggers both methods sequentially on the same thread.
+ * By caching the type encoding from RespondsToSelector, MethodSignatureForSelector
+ * can skip the lock entirely on cache hit.
+ */
+struct ForwardingPipelineCache {
+  void* key;        // instance ptr (protocols) or class ptr (subclasses)
+  SEL selector;
+  char typeEncoding[128];
+  bool valid;
+
+  void store(void* k, SEL sel, const char* encoding) {
+    key = k;
+    selector = sel;
+    std::strncpy(typeEncoding, encoding, sizeof(typeEncoding) - 1);
+    typeEncoding[sizeof(typeEncoding) - 1] = '\0';
+    valid = true;
+  }
+
+  void invalidate() { valid = false; }
+
+  bool matches(void* k, SEL sel) const {
+    return valid && key == k && selector == sel;
+  }
+};
+
+inline ForwardingPipelineCache& GetForwardingCache() {
+  static thread_local ForwardingPipelineCache cache = {nullptr, nullptr, "", false};
+  return cache;
+}
 
 // MARK: - Forwarding Context
 

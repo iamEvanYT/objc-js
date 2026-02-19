@@ -4,6 +4,7 @@
 #include <format>
 #include <napi.h>
 #include <objc/objc.h>
+#include <string_view>
 
 #ifndef NATIVE_BRIDGE_H
 #define NATIVE_BRIDGE_H
@@ -66,8 +67,8 @@ template <typename T1, typename T2> bool IsInRange(T1 value) {
 // MARK: - Conversion Implementation
 
 struct ObjcArgumentContext {
-  std::string className;
-  std::string selectorName;
+  std::string_view className;
+  std::string_view selectorName;
   int argumentIndex;
 };
 

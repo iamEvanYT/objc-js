@@ -25,6 +25,7 @@
 #include "protocol-storage.h"
 #include <functional>
 #include <mutex>
+#include <shared_mutex>
 #include <optional>
 #include <unordered_map>
 
@@ -60,7 +61,7 @@ public:
    * @note Caller must NOT hold the lock. This method acquires the lock.
    */
   SubclassImplementation* Find(void* classPtr) {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::shared_lock<std::shared_mutex> lock(mutex_);
     auto it = subclasses_.find(classPtr);
     if (it != subclasses_.end()) {
       return &it->second;
@@ -74,7 +75,7 @@ public:
    * @param impl The implementation to register (moved).
    */
   void Register(void* classPtr, SubclassImplementation&& impl) {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::unique_lock<std::shared_mutex> lock(mutex_);
     subclasses_.emplace(classPtr, std::move(impl));
   }
 
@@ -84,7 +85,7 @@ public:
    * @return true if the implementation was found and removed, false otherwise.
    */
   bool Unregister(void* classPtr) {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::unique_lock<std::shared_mutex> lock(mutex_);
     return subclasses_.erase(classPtr) > 0;
   }
 
@@ -98,7 +99,7 @@ public:
   template <typename Callback>
   auto WithLock(Callback&& callback)
       -> decltype(callback(std::declval<std::unordered_map<void*, SubclassImplementation>&>())) {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::unique_lock<std::shared_mutex> lock(mutex_);
     return callback(subclasses_);
   }
 
@@ -109,7 +110,7 @@ public:
   template <typename Callback>
   auto WithLockConst(Callback&& callback) const
       -> decltype(callback(std::declval<const std::unordered_map<void*, SubclassImplementation>&>())) {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::shared_lock<std::shared_mutex> lock(mutex_);
     return callback(subclasses_);
   }
 
@@ -122,7 +123,7 @@ public:
    * and returns its superclass pointer.
    */
   void* FindSuperClassInHierarchy(void* instanceClassPtr) {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::shared_lock<std::shared_mutex> lock(mutex_);
     
     // Walk up the class hierarchy to find our subclass implementation
     void* clsPtr = instanceClassPtr;
@@ -143,7 +144,7 @@ public:
    * @return Count of subclasses.
    */
   size_t Size() const {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::shared_lock<std::shared_mutex> lock(mutex_);
     return subclasses_.size();
   }
 
@@ -153,7 +154,7 @@ public:
    * @return true if registered, false otherwise.
    */
   bool Contains(void* classPtr) const {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::shared_lock<std::shared_mutex> lock(mutex_);
     return subclasses_.find(classPtr) != subclasses_.end();
   }
 
@@ -161,7 +162,7 @@ private:
   SubclassManager() = default;
   ~SubclassManager() = default;
 
-  mutable std::mutex mutex_;
+  mutable std::shared_mutex mutex_;
   std::unordered_map<void*, SubclassImplementation> subclasses_;
 };
 

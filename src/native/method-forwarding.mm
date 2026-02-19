@@ -179,13 +179,15 @@ BOOL RespondsToSelector(id self, SEL _cmd, SEL selector) {
   @autoreleasepool {
   void *ptr = (__bridge void *)self;
 
-  // Check if this is one of our implemented methods
-  bool found = ProtocolManager::Instance().WithLock([ptr, selector](auto& map) {
+  // Check if this is one of our implemented methods (read-only, shared lock)
+  bool found = ProtocolManager::Instance().WithLockConst([ptr, selector](const auto& map) {
     auto it = map.find(ptr);
     if (it != map.end()) {
       std::string selName(sel_getName(selector));
       auto methodIt = it->second.methods.find(selName);
       if (methodIt != it->second.methods.end()) {
+        // Cache type encoding for subsequent MethodSignatureForSelector call
+        GetForwardingCache().store(ptr, selector, methodIt->second.typeEncoding.c_str());
         return true;
       }
     }
@@ -206,7 +208,17 @@ BOOL RespondsToSelector(id self, SEL _cmd, SEL selector) {
 NSMethodSignature *MethodSignatureForSelector(id self, SEL _cmd, SEL selector) {
   void *ptr = (__bridge void *)self;
 
-  NSMethodSignature *sig = ProtocolManager::Instance().WithLock([ptr, selector](auto& map) -> NSMethodSignature* {
+  // Check forwarding pipeline cache first (populated by RespondsToSelector)
+  auto& cache = GetForwardingCache();
+  if (cache.matches(ptr, selector)) {
+    NSMethodSignature *sig = [NSMethodSignature signatureWithObjCTypes:cache.typeEncoding];
+    cache.invalidate();
+    if (sig != nil) {
+      return sig;
+    }
+  }
+
+  NSMethodSignature *sig = ProtocolManager::Instance().WithLockConst([ptr, selector](const auto& map) -> NSMethodSignature* {
     auto it = map.find(ptr);
     if (it != map.end()) {
       std::string selName(sel_getName(selector));

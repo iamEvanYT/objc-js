@@ -89,19 +89,34 @@ class NobjcObject {
           return target;
         }
 
+        // Handle customInspectSymbol in get trap instead of mutating native object
+        // (avoids hidden class transition that deoptimizes V8 inline caches)
+        if (methodName === customInspectSymbol) {
+          return () => proxy.toString();
+        }
+
         // guard against symbols
         if (typeof methodName === "symbol") {
           return Reflect.get(object, methodName, receiver);
         }
 
-        // handle toString separately
+        // handle toString separately (cached to avoid repeated closure allocation and FFI check)
         if (methodName === "toString") {
-          // if the receiver has a UTF8String method, use it to get the string representation
-          if ("UTF8String" in receiver) {
-            return () => String(object.$msgSend("UTF8String"));
+          let cache = methodCache.get(object);
+          if (!cache) {
+            cache = new Map();
+            methodCache.set(object, cache);
           }
-          // Otherwise, use the description method
-          return () => String(wrapObjCObjectIfNeeded(object.$msgSend("description")));
+          let fn = cache.get("toString");
+          if (!fn) {
+            // Check directly on native object to avoid triggering proxy has trap
+            const hasUTF8 = target.$msgSend("respondsToSelector:", "UTF8String") as boolean;
+            fn = (hasUTF8
+              ? () => String(object.$msgSend("UTF8String"))
+              : () => String(wrapObjCObjectIfNeeded(object.$msgSend("description")))) as unknown as NobjcMethod;
+            cache.set("toString", fn);
+          }
+          return fn;
         }
 
         // handle other built-in Object.prototype properties (O(1) Set lookup)
@@ -136,9 +151,6 @@ class NobjcObject {
     // Store proxy → native mapping in WeakMap for O(1) unwrap (bypasses Proxy traps)
     nativeObjectMap.set(proxy as unknown as object, object);
 
-    // This is used to override the default inspect behavior for the object. (console.log)
-    (object as any)[customInspectSymbol] = () => proxy.toString();
-
     // Return the proxy
     return proxy;
   }
@@ -166,12 +178,25 @@ interface NobjcMethod {
 const NobjcMethod = function (object: NobjcNative.ObjcObject, methodName: string): NobjcMethod {
   const selector = NobjcMethodNameToObjcSelector(methodName);
 
-  // Use rest params to avoid Array.from(arguments) + .map() double allocation
+  // Fast paths for 0-3 args avoid rest param array allocation + spread overhead
   function methodFunc(...args: any[]): any {
-    for (let i = 0; i < args.length; i++) {
-      args[i] = unwrapArg(args[i]);
+    switch (args.length) {
+      case 0:
+        return wrapObjCObjectIfNeeded(object.$msgSend(selector));
+      case 1:
+        return wrapObjCObjectIfNeeded(object.$msgSend(selector, unwrapArg(args[0])));
+      case 2:
+        return wrapObjCObjectIfNeeded(object.$msgSend(selector, unwrapArg(args[0]), unwrapArg(args[1])));
+      case 3:
+        return wrapObjCObjectIfNeeded(
+          object.$msgSend(selector, unwrapArg(args[0]), unwrapArg(args[1]), unwrapArg(args[2]))
+        );
+      default:
+        for (let i = 0; i < args.length; i++) {
+          args[i] = unwrapArg(args[i]);
+        }
+        return wrapObjCObjectIfNeeded(object.$msgSend(selector, ...args));
     }
-    return wrapObjCObjectIfNeeded(object.$msgSend(selector, ...args));
   }
   // Return the function directly — no Proxy wrapper needed (handler was empty)
   return methodFunc as NobjcMethod;
@@ -185,12 +210,12 @@ class NobjcProtocol {
       const selector = NobjcMethodNameToObjcSelector(methodName);
       // Wrap the implementation to wrap args and unwrap return values
       convertedMethods[selector] = function (...args: any[]) {
-        // Wrap native ObjcObject arguments in NobjcObject proxies
-        const wrappedArgs = args.map((arg) => {
-          return wrapObjCObjectIfNeeded(arg);
-        });
+        // Wrap native ObjcObject arguments in NobjcObject proxies (in-place to avoid allocation)
+        for (let i = 0; i < args.length; i++) {
+          args[i] = wrapObjCObjectIfNeeded(args[i]);
+        }
 
-        const result = impl(...wrappedArgs);
+        const result = impl(...args);
 
         // If the result is already a NobjcObject, unwrap it to get the native object
         return unwrapArg(result);
@@ -377,21 +402,21 @@ class NobjcClass {
             // Wrap self
             const wrappedSelf = wrapObjCObjectIfNeeded(nativeSelf) as NobjcObject;
 
-            // Wrap args, but preserve out-param objects as-is
-            const wrappedArgs = nativeArgs.map((arg) => {
-              // Check if it's an out-param object (has 'set' method)
+            // Wrap args in-place to avoid allocation (preserve out-param objects)
+            for (let i = 0; i < nativeArgs.length; i++) {
+              const arg = nativeArgs[i];
               if (arg && typeof arg === "object" && typeof arg.set === "function") {
-                // Keep out-param objects as-is, but wrap the error objects they handle
-                return {
+                nativeArgs[i] = {
                   set: (error: any) => arg.set(unwrapArg(error)),
                   get: () => wrapObjCObjectIfNeeded(arg.get())
                 };
+              } else {
+                nativeArgs[i] = wrapObjCObjectIfNeeded(arg);
               }
-              return wrapObjCObjectIfNeeded(arg);
-            });
+            }
 
             // Call the user's implementation
-            const result = methodDef.implementation(wrappedSelf, ...wrappedArgs);
+            const result = methodDef.implementation(wrappedSelf, ...nativeArgs);
 
             // Unwrap the return value
             return unwrapArg(result);
@@ -434,9 +459,12 @@ class NobjcClass {
   static super(self: NobjcObject, selector: string, ...args: any[]): any {
     const normalizedSelector = NobjcMethodNameToObjcSelector(selector);
     const nativeSelf = unwrapArg(self);
-    const unwrappedArgs = args.map(unwrapArg);
+    // Mutate args in-place to avoid allocation
+    for (let i = 0; i < args.length; i++) {
+      args[i] = unwrapArg(args[i]);
+    }
 
-    const result = CallSuper(nativeSelf, normalizedSelector, ...unwrappedArgs);
+    const result = CallSuper(nativeSelf, normalizedSelector, ...args);
     return wrapObjCObjectIfNeeded(result);
   }
 }
