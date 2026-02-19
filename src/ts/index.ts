@@ -78,7 +78,7 @@ class NobjcObject {
         if (p === "toString") return true;
         // check if the object responds to the selector
         try {
-          return target.$msgSend("respondsToSelector:", NobjcMethodNameToObjcSelector(p.toString())) as boolean;
+          return target.$respondsToSelector(NobjcMethodNameToObjcSelector(p.toString())) as boolean;
         } catch (e) {
           return false;
         }
@@ -110,7 +110,7 @@ class NobjcObject {
           let fn = cache.get("toString");
           if (!fn) {
             // Check directly on native object to avoid triggering proxy has trap
-            const hasUTF8 = target.$msgSend("respondsToSelector:", "UTF8String") as boolean;
+            const hasUTF8 = target.$respondsToSelector("UTF8String") as boolean;
             fn = (hasUTF8
               ? () => String(object.$msgSend("UTF8String"))
               : () => String(wrapObjCObjectIfNeeded(object.$msgSend("description")))) as unknown as NobjcMethod;
@@ -135,7 +135,7 @@ class NobjcObject {
           // Check respondsToSelector on cache miss only, directly on native
           // object (avoids triggering proxy 'has' trap which would be a second FFI call)
           const selector = NobjcMethodNameToObjcSelector(methodName);
-          if (!target.$msgSend("respondsToSelector:", selector)) {
+          if (!target.$respondsToSelector(selector)) {
             throw new Error(`Method ${methodName} not found on object`);
           }
           method = NobjcMethod(object, methodName);
@@ -178,24 +178,29 @@ interface NobjcMethod {
 const NobjcMethod = function (object: NobjcNative.ObjcObject, methodName: string): NobjcMethod {
   const selector = NobjcMethodNameToObjcSelector(methodName);
 
+  // H2: Cache SEL + method signature natively via $prepareSend.
+  // This avoids re-registering the selector, respondsToSelector:, and
+  // method signature lookup on every call.
+  const handle = object.$prepareSend(selector);
+
   // Fast paths for 0-3 args avoid rest param array allocation + spread overhead
   function methodFunc(...args: any[]): any {
     switch (args.length) {
       case 0:
-        return wrapObjCObjectIfNeeded(object.$msgSend(selector));
+        return wrapObjCObjectIfNeeded(object.$msgSendPrepared(handle));
       case 1:
-        return wrapObjCObjectIfNeeded(object.$msgSend(selector, unwrapArg(args[0])));
+        return wrapObjCObjectIfNeeded(object.$msgSendPrepared(handle, unwrapArg(args[0])));
       case 2:
-        return wrapObjCObjectIfNeeded(object.$msgSend(selector, unwrapArg(args[0]), unwrapArg(args[1])));
+        return wrapObjCObjectIfNeeded(object.$msgSendPrepared(handle, unwrapArg(args[0]), unwrapArg(args[1])));
       case 3:
         return wrapObjCObjectIfNeeded(
-          object.$msgSend(selector, unwrapArg(args[0]), unwrapArg(args[1]), unwrapArg(args[2]))
+          object.$msgSendPrepared(handle, unwrapArg(args[0]), unwrapArg(args[1]), unwrapArg(args[2]))
         );
       default:
         for (let i = 0; i < args.length; i++) {
           args[i] = unwrapArg(args[i]);
         }
-        return wrapObjCObjectIfNeeded(object.$msgSend(selector, ...args));
+        return wrapObjCObjectIfNeeded(object.$msgSendPrepared(handle, ...args));
     }
   }
   // Return the function directly — no Proxy wrapper needed (handler was empty)

@@ -1,6 +1,9 @@
 declare module "#nobjc_native" {
   export class ObjcObject {
     $msgSend(selector: string, ...args: any[]): unknown;
+    $respondsToSelector(selector: string): boolean;
+    $prepareSend(selector: string): unknown;
+    $msgSendPrepared(handle: unknown, ...args: any[]): unknown;
     $getPointer(): Buffer;
   }
   export function LoadLibrary(path: string): void;

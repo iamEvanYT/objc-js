@@ -88,18 +88,18 @@ struct ForwardingCallbacks {
   // Look up context data under lock. Returns nullopt if not found.
   // Also acquires the TSFN.
   std::function<std::optional<ForwardingContext>(
-      void *lookupKey, const std::string &selectorName)>
+      void *lookupKey, SEL selector)>
       lookupContext;
 
   // Get the JS function for direct call (called within HandleScope).
   // Returns empty function if not found.
-  std::function<Napi::Function(void *lookupKey, const std::string &selectorName,
-                               Napi::Env env)>
+  std::function<Napi::Function(void *lookupKey, SEL selector,
+                                Napi::Env env)>
       getJSFunction;
 
   // Re-acquire TSFN for fallback path. Returns nullopt if not found.
   std::function<std::optional<Napi::ThreadSafeFunction>(
-      void *lookupKey, const std::string &selectorName)>
+      void *lookupKey, SEL selector)>
       reacquireTSFN;
 
   // What callback type to use
@@ -118,7 +118,7 @@ struct ForwardingCallbacks {
  * @param callbacks The storage-specific callback functions
  */
 void ForwardInvocationCommon(NSInvocation *invocation,
-                             const std::string &selectorName, void *lookupKey,
+                             SEL selector, void *lookupKey,
                              const ForwardingCallbacks &callbacks);
 
 #endif // FORWARDING_COMMON_H

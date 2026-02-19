@@ -215,7 +215,7 @@ Napi::Value CreateProtocolImplementation(const Napi::CallbackInfo &info) {
     );
 
     // Store method info (TSFN, JS callback, type encoding) in single map
-    impl.methods[selectorName] = ProtocolMethodInfo{
+    impl.methods[selector] = ProtocolMethodInfo{
         .tsfn = tsfn,
         .jsCallback = Napi::Persistent(jsCallback),
         .typeEncoding = std::string(typeEncoding),

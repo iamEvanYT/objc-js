@@ -48,8 +48,7 @@ static BOOL SubclassRespondsToSelector(id self, SEL _cmd, SEL selector) {
   bool found = SubclassManager::Instance().WithLockConst([clsPtr, selector](const auto& map) {
     auto it = map.find(clsPtr);
     if (it != map.end()) {
-      std::string selName(sel_getName(selector));
-      auto methodIt = it->second.methods.find(selName);
+      auto methodIt = it->second.methods.find(selector);
       if (methodIt != it->second.methods.end()) {
         // Cache type encoding for subsequent SubclassMethodSignatureForSelector call
         GetForwardingCache().store(clsPtr, selector, methodIt->second.typeEncoding.c_str());
@@ -90,8 +89,7 @@ static NSMethodSignature *SubclassMethodSignatureForSelector(id self, SEL _cmd,
   NSMethodSignature *sig = SubclassManager::Instance().WithLockConst([clsPtr, selector](const auto& map) -> NSMethodSignature* {
     auto it = map.find(clsPtr);
     if (it != map.end()) {
-      std::string selName(sel_getName(selector));
-      auto methodIt = it->second.methods.find(selName);
+      auto methodIt = it->second.methods.find(selector);
       if (methodIt != it->second.methods.end()) {
         return [NSMethodSignature
             signatureWithObjCTypes:methodIt->second.typeEncoding.c_str()];
@@ -124,8 +122,7 @@ static void SubclassForwardInvocation(id self, SEL _cmd,
   [invocation retain];
 
   SEL selector = [invocation selector];
-  std::string selectorName(sel_getName(selector));
-  NOBJC_LOG("SubclassForwardInvocation: Called for selector %s", selectorName.c_str());
+  NOBJC_LOG("SubclassForwardInvocation: Called for selector %s", sel_getName(selector));
 
   Class cls = object_getClass(self);
   void *clsPtr = (__bridge void *)cls;
@@ -142,17 +139,17 @@ static void SubclassForwardInvocation(id self, SEL _cmd,
 
   // Lookup context and acquire TSFN
   callbacks.lookupContext = [capturedSelfPtr](void *lookupKey,
-                               const std::string &selName) -> std::optional<ForwardingContext> {
-    return SubclassManager::Instance().WithLock([lookupKey, &selName, capturedSelfPtr](auto& map) -> std::optional<ForwardingContext> {
+                                SEL sel) -> std::optional<ForwardingContext> {
+    return SubclassManager::Instance().WithLock([lookupKey, sel, capturedSelfPtr](auto& map) -> std::optional<ForwardingContext> {
       auto it = map.find(lookupKey);
       if (it == map.end()) {
         NOBJC_WARN("Subclass implementation not found for class %p", lookupKey);
         return std::nullopt;
       }
 
-      auto methodIt = it->second.methods.find(selName);
+      auto methodIt = it->second.methods.find(sel);
       if (methodIt == it->second.methods.end()) {
-        NOBJC_WARN("Method not found for selector %s", selName.c_str());
+        NOBJC_WARN("Method not found for selector %s", sel_getName(sel));
         return std::nullopt;
       }
 
@@ -160,7 +157,7 @@ static void SubclassForwardInvocation(id self, SEL _cmd,
       Napi::ThreadSafeFunction tsfn = methodIt->second.callback;
       napi_status acq_status = tsfn.Acquire();
       if (acq_status != napi_ok) {
-        NOBJC_WARN("Failed to acquire ThreadSafeFunction for selector %s", selName.c_str());
+        NOBJC_WARN("Failed to acquire ThreadSafeFunction for selector %s", sel_getName(sel));
         return std::nullopt;
       }
 
@@ -181,15 +178,15 @@ static void SubclassForwardInvocation(id self, SEL _cmd,
   };
 
   // Get JS function for direct call path
-  callbacks.getJSFunction = [](void *lookupKey, const std::string &selName,
-                               Napi::Env /*env*/) -> Napi::Function {
-    return SubclassManager::Instance().WithLock([lookupKey, &selName](auto& map) -> Napi::Function {
+  callbacks.getJSFunction = [](void *lookupKey, SEL sel,
+                                Napi::Env /*env*/) -> Napi::Function {
+    return SubclassManager::Instance().WithLock([lookupKey, sel](auto& map) -> Napi::Function {
       auto it = map.find(lookupKey);
       if (it == map.end()) {
         return Napi::Function();
       }
 
-      auto methodIt = it->second.methods.find(selName);
+      auto methodIt = it->second.methods.find(sel);
       if (methodIt == it->second.methods.end()) {
         return Napi::Function();
       }
@@ -200,14 +197,14 @@ static void SubclassForwardInvocation(id self, SEL _cmd,
 
   // Re-acquire TSFN for fallback path
   callbacks.reacquireTSFN = [](void *lookupKey,
-                               const std::string &selName) -> std::optional<Napi::ThreadSafeFunction> {
-    return SubclassManager::Instance().WithLock([lookupKey, &selName](auto& map) -> std::optional<Napi::ThreadSafeFunction> {
+                                SEL sel) -> std::optional<Napi::ThreadSafeFunction> {
+    return SubclassManager::Instance().WithLock([lookupKey, sel](auto& map) -> std::optional<Napi::ThreadSafeFunction> {
       auto it = map.find(lookupKey);
       if (it == map.end()) {
         return std::nullopt;
       }
 
-      auto methodIt = it->second.methods.find(selName);
+      auto methodIt = it->second.methods.find(sel);
       if (methodIt == it->second.methods.end()) {
         return std::nullopt;
       }
@@ -222,7 +219,7 @@ static void SubclassForwardInvocation(id self, SEL _cmd,
     });
   };
 
-  ForwardInvocationCommon(invocation, selectorName, clsPtr, callbacks);
+  ForwardInvocationCommon(invocation, selector, clsPtr, callbacks);
   } // @autoreleasepool
 }
 
@@ -385,7 +382,7 @@ Napi::Value DefineClass(const Napi::CallbackInfo &info) {
           .selectorName = selectorName,
           .isClassMethod = false,
       };
-      impl.methods[selectorName] = std::move(methodInfo);
+      impl.methods[selector] = std::move(methodInfo);
 
       // Add the method with _objc_msgForward as IMP (triggers forwarding)
       // This ensures our forwardInvocation: gets called

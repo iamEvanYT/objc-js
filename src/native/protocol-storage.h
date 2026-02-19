@@ -4,9 +4,17 @@
 #include <condition_variable>
 #include <mutex>
 #include <napi.h>
+#include <objc/runtime.h>
 #include <pthread.h>
 #include <string>
 #include <unordered_map>
+
+// Hash functor for SEL (interned pointer — O(1) hash, O(1) compare)
+struct SELHash {
+  size_t operator()(SEL sel) const noexcept {
+    return std::hash<const void *>{}(sel);
+  }
+};
 
 // Forward declarations for Objective-C types
 #ifdef __OBJC__
@@ -51,8 +59,8 @@ struct ProtocolMethodInfo {
 
 // Stores information about a protocol implementation instance
 struct ProtocolImplementation {
-  // All method info keyed by selector name (single map replaces three)
-  std::unordered_map<std::string, ProtocolMethodInfo> methods;
+  // All method info keyed by SEL (interned pointer — O(1) hash/compare)
+  std::unordered_map<SEL, ProtocolMethodInfo, SELHash> methods;
   // Dynamically generated class name
   std::string className;
   // Store the environment for direct calls
@@ -82,8 +90,8 @@ struct SubclassImplementation {
   void *objcClass;       // Class
   // The superclass for super calls
   void *superClass;      // Class
-  // Methods defined by JS (selector -> info)
-  std::unordered_map<std::string, SubclassMethodInfo> methods;
+  // Methods defined by JS (keyed by SEL — O(1) hash/compare)
+  std::unordered_map<SEL, SubclassMethodInfo, SELHash> methods;
   // Store the environment for direct calls
   napi_env env;
   // Store the JS thread ID for thread detection

@@ -183,8 +183,7 @@ BOOL RespondsToSelector(id self, SEL _cmd, SEL selector) {
   bool found = ProtocolManager::Instance().WithLockConst([ptr, selector](const auto& map) {
     auto it = map.find(ptr);
     if (it != map.end()) {
-      std::string selName(sel_getName(selector));
-      auto methodIt = it->second.methods.find(selName);
+      auto methodIt = it->second.methods.find(selector);
       if (methodIt != it->second.methods.end()) {
         // Cache type encoding for subsequent MethodSignatureForSelector call
         GetForwardingCache().store(ptr, selector, methodIt->second.typeEncoding.c_str());
@@ -221,8 +220,7 @@ NSMethodSignature *MethodSignatureForSelector(id self, SEL _cmd, SEL selector) {
   NSMethodSignature *sig = ProtocolManager::Instance().WithLockConst([ptr, selector](const auto& map) -> NSMethodSignature* {
     auto it = map.find(ptr);
     if (it != map.end()) {
-      std::string selName(sel_getName(selector));
-      auto methodIt = it->second.methods.find(selName);
+      auto methodIt = it->second.methods.find(selector);
       if (methodIt != it->second.methods.end()) {
         return [NSMethodSignature signatureWithObjCTypes:methodIt->second.typeEncoding.c_str()];
       }
@@ -250,7 +248,6 @@ void ForwardInvocation(id self, SEL _cmd, NSInvocation *invocation) {
   [invocation retain];
 
   SEL selector = [invocation selector];
-  std::string selectorName(sel_getName(selector));
 
   void *ptr = (__bridge void *)self;
 
@@ -260,17 +257,17 @@ void ForwardInvocation(id self, SEL _cmd, NSInvocation *invocation) {
 
   // Lookup context and acquire TSFN
   callbacks.lookupContext = [](void *lookupKey,
-                               const std::string &selName) -> std::optional<ForwardingContext> {
-    return ProtocolManager::Instance().WithLock([lookupKey, &selName](auto& map) -> std::optional<ForwardingContext> {
+                                SEL sel) -> std::optional<ForwardingContext> {
+    return ProtocolManager::Instance().WithLock([lookupKey, sel](auto& map) -> std::optional<ForwardingContext> {
       auto it = map.find(lookupKey);
       if (it == map.end()) {
         NOBJC_WARN("Protocol implementation not found for instance %p", lookupKey);
         return std::nullopt;
       }
 
-      auto methodIt = it->second.methods.find(selName);
+      auto methodIt = it->second.methods.find(sel);
       if (methodIt == it->second.methods.end()) {
-        NOBJC_WARN("Callback not found for selector %s", selName.c_str());
+        NOBJC_WARN("Callback not found for selector %s", sel_getName(sel));
         return std::nullopt;
       }
 
@@ -278,7 +275,7 @@ void ForwardInvocation(id self, SEL _cmd, NSInvocation *invocation) {
       Napi::ThreadSafeFunction tsfn = methodIt->second.tsfn;
       napi_status acq_status = tsfn.Acquire();
       if (acq_status != napi_ok) {
-        NOBJC_WARN("Failed to acquire ThreadSafeFunction for selector %s", selName.c_str());
+        NOBJC_WARN("Failed to acquire ThreadSafeFunction for selector %s", sel_getName(sel));
         return std::nullopt;
       }
 
@@ -299,15 +296,15 @@ void ForwardInvocation(id self, SEL _cmd, NSInvocation *invocation) {
   };
 
   // Get JS function for direct call path
-  callbacks.getJSFunction = [](void *lookupKey, const std::string &selName,
-                               Napi::Env /*env*/) -> Napi::Function {
-    return ProtocolManager::Instance().WithLock([lookupKey, &selName](auto& map) -> Napi::Function {
+  callbacks.getJSFunction = [](void *lookupKey, SEL sel,
+                                Napi::Env /*env*/) -> Napi::Function {
+    return ProtocolManager::Instance().WithLock([lookupKey, sel](auto& map) -> Napi::Function {
       auto it = map.find(lookupKey);
       if (it == map.end()) {
         return Napi::Function();
       }
 
-      auto methodIt = it->second.methods.find(selName);
+      auto methodIt = it->second.methods.find(sel);
       if (methodIt == it->second.methods.end()) {
         return Napi::Function();
       }
@@ -318,14 +315,14 @@ void ForwardInvocation(id self, SEL _cmd, NSInvocation *invocation) {
 
   // Re-acquire TSFN for fallback path
   callbacks.reacquireTSFN = [](void *lookupKey,
-                               const std::string &selName) -> std::optional<Napi::ThreadSafeFunction> {
-    return ProtocolManager::Instance().WithLock([lookupKey, &selName](auto& map) -> std::optional<Napi::ThreadSafeFunction> {
+                                SEL sel) -> std::optional<Napi::ThreadSafeFunction> {
+    return ProtocolManager::Instance().WithLock([lookupKey, sel](auto& map) -> std::optional<Napi::ThreadSafeFunction> {
       auto it = map.find(lookupKey);
       if (it == map.end()) {
         return std::nullopt;
       }
 
-      auto methodIt = it->second.methods.find(selName);
+      auto methodIt = it->second.methods.find(sel);
       if (methodIt == it->second.methods.end()) {
         return std::nullopt;
       }
@@ -340,7 +337,7 @@ void ForwardInvocation(id self, SEL _cmd, NSInvocation *invocation) {
     });
   };
 
-  ForwardInvocationCommon(invocation, selectorName, ptr, callbacks);
+  ForwardInvocationCommon(invocation, selector, ptr, callbacks);
   } // @autoreleasepool
 }
 

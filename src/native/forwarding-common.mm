@@ -9,12 +9,14 @@
 // MARK: - ForwardInvocationCommon Implementation
 
 void ForwardInvocationCommon(NSInvocation *invocation,
-                             const std::string &selectorName, void *lookupKey,
+                             SEL selector, void *lookupKey,
                              const ForwardingCallbacks &callbacks) {
+  const char *selectorCStr = sel_getName(selector);
+
   // Look up context data (acquires TSFN)
-  auto contextOpt = callbacks.lookupContext(lookupKey, selectorName);
+  auto contextOpt = callbacks.lookupContext(lookupKey, selector);
   if (!contextOpt) {
-    NOBJC_WARN("Lookup failed for selector %s", selectorName.c_str());
+    NOBJC_WARN("Lookup failed for selector %s", selectorCStr);
     [invocation release];
     return;
   }
@@ -27,7 +29,7 @@ void ForwardInvocationCommon(NSInvocation *invocation,
   // Create invocation data with RAII guard
   auto data = new InvocationData();
   data->invocation = invocation;
-  data->selectorName = selectorName;
+  data->selectorName = selectorCStr;
   data->typeEncoding = ctx.typeEncoding;
   data->callbackType = callbacks.callbackType;
   data->instancePtr = ctx.instancePtr;
@@ -45,7 +47,7 @@ void ForwardInvocationCommon(NSInvocation *invocation,
 
   if (use_direct_call) {
     NOBJC_LOG("ForwardInvocationCommon: Using direct call path for selector %s",
-              selectorName.c_str());
+              selectorCStr);
 
     // Release the TSFN since we're calling directly
     ctx.tsfn.Release();
@@ -66,28 +68,28 @@ void ForwardInvocationCommon(NSInvocation *invocation,
       
       // Fallback to callback lookup if cache miss (shouldn't happen)
       if (jsFn.IsEmpty()) {
-        jsFn = callbacks.getJSFunction(lookupKey, selectorName, callEnv);
+        jsFn = callbacks.getJSFunction(lookupKey, selector, callEnv);
       }
       
       if (jsFn.IsEmpty()) {
         NOBJC_WARN("JS function not found for selector %s (direct path)",
-                   selectorName.c_str());
+                   selectorCStr);
         return; // dataGuard cleans up
       }
 
       // Transfer ownership to CallJSCallback - it will clean up
       CallJSCallback(callEnv, jsFn, dataGuard.release());
       NOBJC_LOG("ForwardInvocationCommon: Direct call succeeded for %s",
-                selectorName.c_str());
+                selectorCStr);
     } catch (const std::exception &e) {
       NOBJC_ERROR("Error calling JS callback directly: %s", e.what());
       NOBJC_LOG("Falling back to ThreadSafeFunction for selector %s",
-                selectorName.c_str());
+                selectorCStr);
 
       // Re-create data for fallback since we may have released it
       auto fallbackData = new InvocationData();
       fallbackData->invocation = invocation;
-      fallbackData->selectorName = selectorName;
+      fallbackData->selectorName = selectorCStr;
       fallbackData->typeEncoding = ctx.typeEncoding;
       fallbackData->callbackType = callbacks.callbackType;
       fallbackData->instancePtr = ctx.instancePtr;
@@ -95,20 +97,21 @@ void ForwardInvocationCommon(NSInvocation *invocation,
       InvocationDataGuard fallbackGuard(fallbackData);
 
       // Re-acquire TSFN for fallback
-      auto tsfnOpt = callbacks.reacquireTSFN(lookupKey, selectorName);
+      auto tsfnOpt = callbacks.reacquireTSFN(lookupKey, selector);
       if (tsfnOpt) {
-        if (FallbackToTSFN(*tsfnOpt, fallbackGuard.release(), selectorName)) {
+        std::string selectorStr(selectorCStr);
+        if (FallbackToTSFN(*tsfnOpt, fallbackGuard.release(), selectorStr)) {
           return; // Data cleaned up in callback
         }
         NOBJC_ERROR("ForwardInvocationCommon: Fallback failed for %s",
-                    selectorName.c_str());
+                    selectorCStr);
       }
       // If we get here, fallbackGuard cleans up
     }
   } else {
     // Cross-thread call via TSFN (or Electron forcing TSFN)
     NOBJC_LOG("ForwardInvocationCommon: Using TSFN+runloop path for selector %s",
-              selectorName.c_str());
+              selectorCStr);
 
     std::mutex completionMutex;
     std::condition_variable completionCv;
@@ -124,7 +127,7 @@ void ForwardInvocationCommon(NSInvocation *invocation,
 
     if (status != napi_ok) {
       NOBJC_ERROR("Failed to call ThreadSafeFunction for selector %s (status: %d)",
-                  selectorName.c_str(), status);
+                  selectorCStr, status);
       // We already released from guard, so clean up manually
       [invocation release];
       delete data;

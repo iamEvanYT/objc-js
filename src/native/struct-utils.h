@@ -517,14 +517,177 @@ inline bool IsStructTypeEncoding(const char *typeEncoding) {
   return *SimplifyTypeEncoding(typeEncoding) == '{';
 }
 
+// MARK: - Fast Path: Specialized Struct Pack/Unpack (H3)
+
+/**
+ * Extract struct name from a type encoding string.
+ * E.g., "{CGRect=...}" → "CGRect", "{_NSRange=QQ}" → "_NSRange"
+ * Returns empty string_view if encoding is malformed.
+ */
+inline std::string_view ExtractStructName(const char *encoding) {
+  if (!encoding || *encoding != '{') return {};
+  const char *start = encoding + 1;
+  const char *end = start;
+  while (*end && *end != '=' && *end != '}') end++;
+  return {start, static_cast<size_t>(end - start)};
+}
+
+/**
+ * Fast-path pack for CGPoint / NSPoint: { double x, y }
+ * Reads jsValue.x and jsValue.y directly into buffer.
+ * Returns true if handled, false to fall through to generic path.
+ */
+inline bool TryPackCGPoint(Napi::Env env, const Napi::Value &jsValue,
+                           uint8_t *buffer) {
+  if (!jsValue.IsObject() || jsValue.IsArray()) return false;
+  Napi::Object obj = jsValue.As<Napi::Object>();
+  double x = obj.Get("x").As<Napi::Number>().DoubleValue();
+  double y = obj.Get("y").As<Napi::Number>().DoubleValue();
+  memcpy(buffer, &x, sizeof(double));
+  memcpy(buffer + sizeof(double), &y, sizeof(double));
+  return true;
+}
+
+/**
+ * Fast-path unpack for CGPoint / NSPoint: { double x, y }
+ */
+inline Napi::Value TryUnpackCGPoint(Napi::Env env, const uint8_t *buffer) {
+  double x, y;
+  memcpy(&x, buffer, sizeof(double));
+  memcpy(&y, buffer + sizeof(double), sizeof(double));
+  Napi::Object result = Napi::Object::New(env);
+  result.Set("x", Napi::Number::New(env, x));
+  result.Set("y", Napi::Number::New(env, y));
+  return result;
+}
+
+/**
+ * Fast-path pack for CGSize / NSSize: { double width, height }
+ */
+inline bool TryPackCGSize(Napi::Env env, const Napi::Value &jsValue,
+                          uint8_t *buffer) {
+  if (!jsValue.IsObject() || jsValue.IsArray()) return false;
+  Napi::Object obj = jsValue.As<Napi::Object>();
+  double w = obj.Get("width").As<Napi::Number>().DoubleValue();
+  double h = obj.Get("height").As<Napi::Number>().DoubleValue();
+  memcpy(buffer, &w, sizeof(double));
+  memcpy(buffer + sizeof(double), &h, sizeof(double));
+  return true;
+}
+
+/**
+ * Fast-path unpack for CGSize / NSSize: { double width, height }
+ */
+inline Napi::Value TryUnpackCGSize(Napi::Env env, const uint8_t *buffer) {
+  double w, h;
+  memcpy(&w, buffer, sizeof(double));
+  memcpy(&h, buffer + sizeof(double), sizeof(double));
+  Napi::Object result = Napi::Object::New(env);
+  result.Set("width", Napi::Number::New(env, w));
+  result.Set("height", Napi::Number::New(env, h));
+  return result;
+}
+
+/**
+ * Fast-path pack for CGRect / NSRect: { CGPoint origin, CGSize size }
+ * Memory layout: [origin.x, origin.y, size.width, size.height] — 4 doubles
+ */
+inline bool TryPackCGRect(Napi::Env env, const Napi::Value &jsValue,
+                          uint8_t *buffer) {
+  if (!jsValue.IsObject() || jsValue.IsArray()) return false;
+  Napi::Object obj = jsValue.As<Napi::Object>();
+  Napi::Object origin = obj.Get("origin").As<Napi::Object>();
+  Napi::Object size = obj.Get("size").As<Napi::Object>();
+  double vals[4];
+  vals[0] = origin.Get("x").As<Napi::Number>().DoubleValue();
+  vals[1] = origin.Get("y").As<Napi::Number>().DoubleValue();
+  vals[2] = size.Get("width").As<Napi::Number>().DoubleValue();
+  vals[3] = size.Get("height").As<Napi::Number>().DoubleValue();
+  memcpy(buffer, vals, sizeof(vals));
+  return true;
+}
+
+/**
+ * Fast-path unpack for CGRect / NSRect.
+ */
+inline Napi::Value TryUnpackCGRect(Napi::Env env, const uint8_t *buffer) {
+  double vals[4];
+  memcpy(vals, buffer, sizeof(vals));
+
+  Napi::Object origin = Napi::Object::New(env);
+  origin.Set("x", Napi::Number::New(env, vals[0]));
+  origin.Set("y", Napi::Number::New(env, vals[1]));
+
+  Napi::Object size = Napi::Object::New(env);
+  size.Set("width", Napi::Number::New(env, vals[2]));
+  size.Set("height", Napi::Number::New(env, vals[3]));
+
+  Napi::Object result = Napi::Object::New(env);
+  result.Set("origin", origin);
+  result.Set("size", size);
+  return result;
+}
+
+/**
+ * Fast-path pack for NSRange / _NSRange: { NSUInteger location, length }
+ * On 64-bit, NSUInteger = unsigned long long = 8 bytes.
+ */
+inline bool TryPackNSRange(Napi::Env env, const Napi::Value &jsValue,
+                           uint8_t *buffer) {
+  if (!jsValue.IsObject() || jsValue.IsArray()) return false;
+  Napi::Object obj = jsValue.As<Napi::Object>();
+  uint64_t location = static_cast<uint64_t>(
+      obj.Get("location").As<Napi::Number>().Int64Value());
+  uint64_t length = static_cast<uint64_t>(
+      obj.Get("length").As<Napi::Number>().Int64Value());
+  memcpy(buffer, &location, sizeof(uint64_t));
+  memcpy(buffer + sizeof(uint64_t), &length, sizeof(uint64_t));
+  return true;
+}
+
+/**
+ * Fast-path unpack for NSRange / _NSRange.
+ */
+inline Napi::Value TryUnpackNSRange(Napi::Env env, const uint8_t *buffer) {
+  uint64_t location, length;
+  memcpy(&location, buffer, sizeof(uint64_t));
+  memcpy(&length, buffer + sizeof(uint64_t), sizeof(uint64_t));
+  Napi::Object result = Napi::Object::New(env);
+  result.Set("location", Napi::Number::New(env, static_cast<double>(location)));
+  result.Set("length", Napi::Number::New(env, static_cast<double>(length)));
+  return result;
+}
+
 /**
  * Pack a JS value into a newly allocated struct buffer.
  * Returns a vector<uint8_t> that must be kept alive until after the
  * NSInvocation is invoked.
+ *
+ * Tries specialized fast paths for CGRect/CGPoint/CGSize/NSRange first,
+ * falling through to the generic parser for other struct types.
  */
 inline std::vector<uint8_t>
 PackJSValueAsStruct(Napi::Env env, const Napi::Value &jsValue,
                     const char *typeEncoding) {
+  // Fast path: check struct name for well-known types
+  auto name = ExtractStructName(typeEncoding);
+  if (!name.empty()) {
+    if (name == "CGRect" || name == "NSRect") {
+      std::vector<uint8_t> buffer(4 * sizeof(double), 0);
+      if (TryPackCGRect(env, jsValue, buffer.data())) return buffer;
+    } else if (name == "CGPoint" || name == "NSPoint") {
+      std::vector<uint8_t> buffer(2 * sizeof(double), 0);
+      if (TryPackCGPoint(env, jsValue, buffer.data())) return buffer;
+    } else if (name == "CGSize" || name == "NSSize") {
+      std::vector<uint8_t> buffer(2 * sizeof(double), 0);
+      if (TryPackCGSize(env, jsValue, buffer.data())) return buffer;
+    } else if (name == "_NSRange" || name == "NSRange") {
+      std::vector<uint8_t> buffer(2 * sizeof(uint64_t), 0);
+      if (TryPackNSRange(env, jsValue, buffer.data())) return buffer;
+    }
+  }
+
+  // Generic path: parse encoding and pack recursively
   const ParsedStructType &parsed = GetOrParseStructEncoding(typeEncoding);
 
   if (parsed.fields.empty()) {
@@ -539,10 +702,28 @@ PackJSValueAsStruct(Napi::Env env, const Napi::Value &jsValue,
 
 /**
  * Unpack a struct byte buffer into a JS object.
+ *
+ * Tries specialized fast paths for CGRect/CGPoint/CGSize/NSRange first,
+ * falling through to the generic parser for other struct types.
  */
 inline Napi::Value UnpackStructToJSValue(Napi::Env env,
                                           const uint8_t *buffer,
                                           const char *typeEncoding) {
+  // Fast path: check struct name for well-known types
+  auto name = ExtractStructName(typeEncoding);
+  if (!name.empty()) {
+    if (name == "CGRect" || name == "NSRect") {
+      return TryUnpackCGRect(env, buffer);
+    } else if (name == "CGPoint" || name == "NSPoint") {
+      return TryUnpackCGPoint(env, buffer);
+    } else if (name == "CGSize" || name == "NSSize") {
+      return TryUnpackCGSize(env, buffer);
+    } else if (name == "_NSRange" || name == "NSRange") {
+      return TryUnpackNSRange(env, buffer);
+    }
+  }
+
+  // Generic path
   const ParsedStructType &parsed = GetOrParseStructEncoding(typeEncoding);
 
   if (parsed.fields.empty()) {
