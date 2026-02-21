@@ -48,7 +48,12 @@ class NobjcLibrary {
           LoadLibrary(library);
           this.wasLoaded = true;
         }
-        cls = new NobjcObject(GetClassObject(className));
+        const classObject = GetClassObject(className);
+        if (classObject === undefined) {
+          // Class not found. Make sure the class exists before trying to access it.
+          return undefined;
+        }
+        cls = new NobjcObject(classObject);
         classCache.set(className, cls);
         return cls;
       }
