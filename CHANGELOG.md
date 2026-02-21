@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.2.1] - 2026-02-21
+
+- feat: add calling C functions like NSLog, NSHomeDirectory, NSStringFromClass
+- refactor: improve performance
+
 ## [1.1.0] - 2026-02-17
 
 - feat: added support for structs
