@@ -1,4 +1,4 @@
-import { test, expect, describe } from "bun:test";
+import { test, expect, describe } from "./test-utils.js";
 import { NobjcLibrary, NobjcObject } from "../dist/index.js";
 
 describe("Struct Support Tests", () => {

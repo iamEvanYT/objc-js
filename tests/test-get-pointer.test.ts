@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { test, expect } from "./test-utils.js";
 import { NobjcLibrary, getPointer, fromPointer } from "../dist/index.js";
 
 test("getPointer returns a Buffer with pointer address", () => {

@@ -1,4 +1,4 @@
-import { test, expect, describe } from "bun:test";
+import { test, expect, describe } from "./test-utils.js";
 import { NobjcLibrary, NobjcObject, NobjcProtocol } from "../dist/index.js";
 
 // Type declarations for the Objective-C classes we're testing
@@ -62,7 +62,7 @@ describe("Protocol Implementation Tests", () => {
     });
 
     const delegateDescription = (delegate as any).description();
-    expect(delegateDescription).toBeTypeOf("object");
+    expect(typeof delegateDescription).toBe("object");
   });
 
   test("should respond to NSObject methods", () => {

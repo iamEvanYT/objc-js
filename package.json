@@ -30,7 +30,9 @@
     "prebuild": "node-gyp clean && node-gyp configure",
     "build": "npm run build-native && npm run build-scripts && npm run build-source",
     "pretest": "npm run build",
-    "test": "bun test",
+    "test": "bun run test:bun",
+    "test:bun": "bun run build && bun test",
+    "test:node": "bun run build && npx vitest run",
     "test:native": "bun test tests/test-native-code.test.ts",
     "test:js": "bun test tests/test-js-code.test.ts",
     "test:string-lifetime": "bun test tests/test-string-lifetime.test.ts",
@@ -57,7 +59,8 @@
     "node-gyp": "^12.1.0",
     "prebuildify": "^6.0.1",
     "prettier": "^3.7.4",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.18"
   },
   "gypfile": true,
   "patchedDependencies": {

@@ -1,4 +1,4 @@
-import { test, expect, describe } from "bun:test";
+import { test, expect, describe } from "./test-utils.js";
 import { NobjcLibrary, NobjcObject, NobjcClass, getPointer } from "../dist/index.js";
 
 // Type declarations
@@ -442,7 +442,6 @@ describe("DefineClass / Subclassing Tests", () => {
     const instance = (MyClass as any).alloc().init();
     const result = (instance as any).processInteger$(42);
 
-    // @ts-expect-error - capturedIndex would be number
     expect(capturedIndex).toBe(42);
     expect(result.intValue()).toBe(42);
   });
@@ -571,7 +570,6 @@ describe("DefineClass / Subclassing Tests", () => {
     const testPath = NSString.stringWithUTF8String$("/tmp");
     const contents = (manager as any).contentsOfDirectoryAtPath$error$(testPath, null);
 
-    // @ts-expect-error - capturedPath would be string
     expect(capturedPath).toBe("/tmp");
     expect(contents).not.toBeNull();
   });

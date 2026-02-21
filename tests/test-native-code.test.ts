@@ -1,4 +1,4 @@
-import { test, expect, describe } from "bun:test";
+import { test, expect, describe } from "./test-utils.js";
 import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 
