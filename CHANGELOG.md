@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.3.0] - 2026-02-21
+
+- feat: add block support
+- feat: add testing for node with vitest
+
 ## [1.2.1] - 2026-02-21
 
 - feat: add calling C functions like NSLog, NSHomeDirectory, NSStringFromClass
