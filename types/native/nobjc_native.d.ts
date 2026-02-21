@@ -53,4 +53,22 @@ declare module "#nobjc_native" {
    * @returns The result of the super call
    */
   export function CallSuper(self: ObjcObject, selector: string, ...args: any[]): any;
+
+  /**
+   * Call a C function by name using dlsym + libffi.
+   * The framework containing the function must be loaded first (via LoadLibrary).
+   * @param name The function name (e.g., "NSLog", "CGRectMake")
+   * @param returnType ObjC type encoding for the return type (e.g., "v" for void, "@" for id)
+   * @param argTypes Array of ObjC type encodings for each argument
+   * @param fixedArgCount Number of fixed args (for variadic functions). Set equal to argTypes.length for non-variadic.
+   * @param args The actual arguments to pass
+   * @returns The return value converted to JS
+   */
+  export function CallFunction(
+    name: string,
+    returnType: string,
+    argTypes: string[],
+    fixedArgCount: number,
+    ...args: any[]
+  ): any;
 }

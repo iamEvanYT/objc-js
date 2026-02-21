@@ -15,7 +15,8 @@ const {
   FromPointer,
   CreateProtocolImplementation,
   DefineClass,
-  CallSuper
+  CallSuper,
+  CallFunction
 } = binding;
 export {
   LoadLibrary,
@@ -25,6 +26,7 @@ export {
   FromPointer,
   CreateProtocolImplementation,
   DefineClass,
-  CallSuper
+  CallSuper,
+  CallFunction
 };
 export type { _binding as NobjcNative };

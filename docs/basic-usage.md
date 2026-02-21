@@ -109,8 +109,40 @@ const authServices = new NobjcLibrary(
 
 Provides authentication-related classes for WebAuthn/Passkeys.
 
+## Calling C Functions
+
+Many frameworks export plain C functions alongside Objective-C classes. Use `callFunction` to call them:
+
+```typescript
+import { NobjcLibrary, callFunction } from "objc-js";
+
+const foundation = new NobjcLibrary("/System/Library/Frameworks/Foundation.framework/Foundation");
+const NSString = foundation["NSString"];
+
+// NSHomeDirectory() — returns NSString, specify { returns }
+const homeDir = callFunction("NSHomeDirectory", { returns: "@" });
+console.log(homeDir.toString()); // "/Users/you"
+
+// NSLog — void return, arg type inferred from NobjcObject
+const msg = NSString.stringWithUTF8String$("Hello from Node.js!");
+callFunction("NSLog", msg);
+```
+
+For variadic functions like `NSLog` with format substitutions, use `callVariadicFunction`:
+
+```typescript
+import { callVariadicFunction } from "objc-js";
+
+const format = NSString.stringWithUTF8String$("Hello, %@!");
+const name = NSString.stringWithUTF8String$("World");
+callVariadicFunction("NSLog", 1, format, name);
+```
+
+See the [C Functions guide](./c-functions.md) for the full type encoding table and more examples.
+
 ## Next Steps
 
+- Learn how to [call C functions](./c-functions.md) (NSLog, NSHomeDirectory, etc.)
 - Learn how to [pass and receive structs](./structs.md) (CGRect, NSRange, etc.)
 - Learn how to [subclass Objective-C classes](./subclassing.md)
 - Implement [protocols](./protocol-implementation.md)

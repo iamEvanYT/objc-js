@@ -278,6 +278,9 @@ inline auto AsObjCArgument(const Napi::Value &value, const char *typeEncoding,
     return ConvertToNativeValue<SEL>(value, context);
   case '@':
     return ConvertToNativeValue<id>(value, context);
+  case '#':
+    // Class is also an id in ObjC — an ObjcObject wrapping a Class works here
+    return ConvertToNativeValue<id>(value, context);
   case '^': // Pointer type (^v, ^c, etc.)
     if (value.IsBuffer()) {
       Napi::Buffer<uint8_t> buffer = value.As<Napi::Buffer<uint8_t>>();

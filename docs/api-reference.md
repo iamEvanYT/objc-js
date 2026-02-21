@@ -406,6 +406,106 @@ Only use this function when:
 - You received the pointer from a trusted native API that guarantees the object's validity
 - You're interfacing with external native code that provides valid Objective-C object pointers
 
+## callFunction()
+
+Call a C function by name. The framework containing the function must be loaded first via `new NobjcLibrary(...)`. Uses `dlsym` to look up the function symbol and `libffi` to call it with the correct ABI.
+
+Argument types are inferred from JS values by default. Return type defaults to `"v"` (void) — pass an options object to override.
+
+```typescript
+function callFunction(name: string, ...args: any[]): any;
+function callFunction(name: string, options: CallFunctionOptions, ...args: any[]): any;
+```
+
+**Parameters:**
+
+- `name` (string): The C function name (e.g., `"NSHomeDirectory"`, `"NSStringFromClass"`)
+- `options` (CallFunctionOptions, optional): Type specifications — see below
+- `...args`: The actual argument values
+
+**CallFunctionOptions:**
+
+```typescript
+interface CallFunctionOptions {
+  returns?: string; // Return type encoding (default: "v")
+  args?: string[]; // Argument type encodings (overrides inference)
+  types?: string; // Combined type string: return + arg types (e.g., "@#")
+}
+```
+
+**Type Inference:** NobjcObject → `@`, string → `@`, boolean → `B`, number → `d`, null → `@`
+
+**Returns:** The return value converted to a JavaScript type. Object returns are wrapped as `NobjcObject`. Void functions return `undefined`.
+
+**Example:**
+
+```typescript
+import { NobjcLibrary, callFunction } from "objc-js";
+
+const foundation = new NobjcLibrary("/System/Library/Frameworks/Foundation.framework/Foundation");
+const NSString = foundation["NSString"];
+
+// Void function — simplest form, no options needed
+const msg = NSString.stringWithUTF8String$("Hello!");
+callFunction("NSLog", msg);
+
+// NSHomeDirectory() — returns NSString, specify { returns }
+const homeDir = callFunction("NSHomeDirectory", { returns: "@" });
+console.log(homeDir.toString()); // "/Users/you"
+
+// NSStringFromClass(Class) — arg type inferred from NobjcObject
+const name = callFunction("NSStringFromClass", { returns: "@" }, NSString);
+console.log(name.toString()); // "NSString"
+
+// NSStringFromSelector(SEL) — explicit arg type needed (string defaults to @, not :)
+const selName = callFunction("NSStringFromSelector", { returns: "@", args: [":"] }, "description");
+console.log(selName.toString()); // "description"
+
+// Combined type string shorthand
+const cls = callFunction("NSStringFromClass", { types: "@#" }, NSString);
+```
+
+See [C Functions Documentation](./c-functions.md) for a full guide and type encoding table.
+
+## callVariadicFunction()
+
+Call a variadic C function by name. This correctly handles the variadic calling convention, which is important on Apple Silicon (ARM64) where variadic and non-variadic ABIs differ.
+
+```typescript
+function callVariadicFunction(name: string, fixedArgCount: number, ...args: any[]): any;
+function callVariadicFunction(name: string, options: CallFunctionOptions, fixedArgCount: number, ...args: any[]): any;
+```
+
+**Parameters:**
+
+- `name` (string): The C function name (e.g., `"NSLog"`)
+- `options` (CallFunctionOptions, optional): Type specifications (same as `callFunction`)
+- `fixedArgCount` (number): Number of fixed (non-variadic) arguments
+- `...args`: The actual argument values (fixed args first, then variadic args)
+
+**Returns:** The return value converted to a JavaScript type
+
+**Example:**
+
+```typescript
+import { NobjcLibrary, callVariadicFunction } from "objc-js";
+
+const foundation = new NobjcLibrary("/System/Library/Frameworks/Foundation.framework/Foundation");
+const NSString = foundation["NSString"];
+
+// NSLog is variadic: void NSLog(NSString *format, ...)
+// fixedArgCount = 1 (format string is the only fixed argument)
+const format = NSString.stringWithUTF8String$("Hello, %@!");
+const name = NSString.stringWithUTF8String$("World");
+callVariadicFunction("NSLog", 1, format, name);
+
+// With explicit arg types (e.g., integer variadic arg)
+const intFmt = NSString.stringWithUTF8String$("number = %d");
+callVariadicFunction("NSLog", { args: ["@", "i"] }, 1, intFmt, 42);
+```
+
+See [C Functions Documentation](./c-functions.md) for more examples.
+
 ## Framework Paths
 
 Common framework paths for macOS:
@@ -455,6 +555,7 @@ Most macOS system frameworks follow the same path pattern:
 ## See Also
 
 - [Basic Usage](./basic-usage.md)
+- [C Functions](./c-functions.md)
 - [Structs](./structs.md)
 - [Subclassing Documentation](./subclassing.md)
 - [Protocol Implementation Documentation](./protocol-implementation.md)

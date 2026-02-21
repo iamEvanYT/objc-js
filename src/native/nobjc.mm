@@ -1,4 +1,5 @@
 #include "ObjcObject.h"
+#include "call-function.h"
 #include "pointer-utils.h"
 #include "protocol-impl.h"
 #include "subclass-impl.h"
@@ -88,6 +89,7 @@ Napi::Object InitAll(Napi::Env env, Napi::Object exports) {
               Napi::Function::New(env, CreateProtocolImplementation));
   exports.Set("DefineClass", Napi::Function::New(env, DefineClass));
   exports.Set("CallSuper", Napi::Function::New(env, CallSuper));
+  exports.Set("CallFunction", Napi::Function::New(env, CallFunction));
   return exports;
 }
 

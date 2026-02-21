@@ -6,7 +6,8 @@ import {
   FromPointer,
   CreateProtocolImplementation,
   DefineClass,
-  CallSuper
+  CallSuper,
+  CallFunction
 } from "./native.js";
 import { NobjcNative } from "./native.js";
 
@@ -474,4 +475,233 @@ class NobjcClass {
   }
 }
 
-export { NobjcLibrary, NobjcObject, NobjcMethod, NobjcProtocol, NobjcClass, getPointer, fromPointer };
+/**
+ * Options for specifying C function type information.
+ * Only needed when type inference isn't sufficient (e.g., non-void return, SEL/integer args).
+ */
+interface CallFunctionOptions {
+  /** Return type encoding. Defaults to "v" (void). Common: "@" (object), "v" (void), "d" (double), "q" (int64). */
+  returns?: string;
+  /** Argument type encodings. If omitted, types are inferred from JS values. */
+  args?: string[];
+  /** Combined type string (return type + arg types). Alternative to returns/args. E.g. "@#" = returns @, arg #. */
+  types?: string;
+}
+
+/**
+ * Parse a combined type encoding string into individual type encodings.
+ * Handles multi-character encodings: ^v (pointer), {CGRect=dd} (struct), etc.
+ */
+function parseTypeEncodings(typeStr: string): string[] {
+  const result: string[] = [];
+  let i = 0;
+  while (i < typeStr.length) {
+    const start = i;
+    const ch = typeStr[i];
+    if (ch === "{" || ch === "[" || ch === "(") {
+      const close = ch === "{" ? "}" : ch === "[" ? "]" : ")";
+      let depth = 1;
+      i++;
+      while (i < typeStr.length && depth > 0) {
+        if (typeStr[i] === ch) depth++;
+        else if (typeStr[i] === close) depth--;
+        i++;
+      }
+    } else if (ch === "^") {
+      i++;
+      if (i < typeStr.length) {
+        if (typeStr[i] === "{" || typeStr[i] === "[" || typeStr[i] === "(") {
+          // Pointer to compound type — parse the inner type
+          const inner = parseTypeEncodings(typeStr.substring(i));
+          i += inner[0]?.length ?? 1;
+        } else {
+          i++; // pointer to simple type (^v, ^@, etc.)
+        }
+      }
+    } else {
+      i++;
+    }
+    result.push(typeStr.substring(start, i));
+  }
+  return result;
+}
+
+/**
+ * Infer the ObjC type encoding for a JS argument value.
+ * - NobjcObject / object → "@" (id)
+ * - string → "@" (auto-converted to NSString by native code)
+ * - boolean → "B" (BOOL)
+ * - number → "d" (double/CGFloat)
+ * - null/undefined → "@" (nil)
+ *
+ * Note: numbers always infer as "d" (double). For integer params (NSInteger, etc.),
+ * specify the type explicitly via { args: ["q"] } or { types: "..." }.
+ */
+function inferArgType(arg: any): string {
+  if (arg === null || arg === undefined) return "@";
+  if (typeof arg === "boolean") return "B";
+  if (typeof arg === "number") return "d";
+  return "@";
+}
+
+/**
+ * Check if a value is a CallFunctionOptions object (not a NobjcObject or struct).
+ */
+function isCallOptions(value: any): value is CallFunctionOptions {
+  if (value === null || value === undefined || typeof value !== "object") return false;
+  if (nativeObjectMap.has(value)) return false; // It's a NobjcObject proxy
+  return "returns" in value || "types" in value || "args" in value;
+}
+
+/**
+ * Resolve return type and arg types from options + values.
+ */
+function resolveTypes(options: CallFunctionOptions | null, args: any[]): { returnType: string; argTypes: string[] } {
+  if (options?.types) {
+    const encodings = parseTypeEncodings(options.types);
+    const returnType = encodings[0] || "v";
+    const explicitArgTypes = encodings.slice(1);
+    return {
+      returnType,
+      argTypes: explicitArgTypes.length > 0 ? explicitArgTypes : args.map(inferArgType)
+    };
+  }
+  return {
+    returnType: options?.returns || "v",
+    argTypes: options?.args || args.map(inferArgType)
+  };
+}
+
+/**
+ * Call a C function by name.
+ *
+ * The framework containing the function must be loaded first (e.g., via `new NobjcLibrary(...)`).
+ * Uses `dlsym` to look up the function symbol and `libffi` to call it with the correct ABI.
+ *
+ * Argument types are inferred from JS values by default:
+ * - NobjcObject → `@` (id)
+ * - string → `@` (auto-converted to NSString)
+ * - boolean → `B` (BOOL)
+ * - number → `d` (double/CGFloat)
+ * - null → `@` (nil)
+ *
+ * Return type defaults to `"v"` (void). Pass an options object to specify return/arg types.
+ *
+ * @param name - The function name (e.g., "NSLog", "NSHomeDirectory")
+ * @param optionsOrFirstArg - Either a CallFunctionOptions object or the first function argument
+ * @param args - The actual arguments to pass to the function
+ * @returns The return value converted to a JavaScript type, or undefined for void functions
+ *
+ * @example
+ * ```typescript
+ * import { NobjcLibrary, callFunction } from "objc-js";
+ *
+ * const Foundation = new NobjcLibrary(
+ *   "/System/Library/Frameworks/Foundation.framework/Foundation"
+ * );
+ * const NSString = Foundation.NSString;
+ *
+ * // Void function — simplest form, no options needed
+ * const msg = NSString.stringWithUTF8String$("Hello!");
+ * callFunction("NSLog", msg);
+ *
+ * // Function that returns a value — specify { returns }
+ * const homeDir = callFunction("NSHomeDirectory", { returns: "@" });
+ * console.log(homeDir.toString());
+ *
+ * // Explicit arg types when inference isn't enough
+ * const selName = callFunction("NSStringFromSelector", { returns: "@", args: [":"] }, "description");
+ *
+ * // Combined type string shorthand (return + args)
+ * const className = callFunction("NSStringFromClass", { types: "@#" }, NSString);
+ * ```
+ */
+function callFunction(name: string, ...rest: any[]): any {
+  let options: CallFunctionOptions | null = null;
+  let args: any[];
+
+  if (rest.length > 0 && isCallOptions(rest[0])) {
+    options = rest[0];
+    args = rest.slice(1);
+  } else {
+    args = rest;
+  }
+
+  const { returnType, argTypes } = resolveTypes(options, args);
+
+  // Unwrap NobjcObject proxies to native objects
+  for (let i = 0; i < args.length; i++) {
+    args[i] = unwrapArg(args[i]);
+  }
+  const result = CallFunction(name, returnType, argTypes, argTypes.length, ...args);
+  return wrapObjCObjectIfNeeded(result);
+}
+
+/**
+ * Call a variadic C function by name.
+ *
+ * Correctly handles variadic calling conventions (important on Apple Silicon / ARM64
+ * where variadic args go on the stack while fixed args go in registers).
+ *
+ * @param name - The function name (e.g., "NSLog")
+ * @param optionsOrFixedCount - Either a CallFunctionOptions object or the fixedArgCount directly
+ * @param fixedArgCountOrFirstArg - Number of fixed (non-variadic) arguments, or first arg if options were provided
+ * @param args - The actual arguments to pass to the function
+ * @returns The return value converted to a JavaScript type
+ *
+ * @example
+ * ```typescript
+ * import { NobjcLibrary, callVariadicFunction } from "objc-js";
+ *
+ * const Foundation = new NobjcLibrary(
+ *   "/System/Library/Frameworks/Foundation.framework/Foundation"
+ * );
+ * const NSString = Foundation.NSString;
+ *
+ * // Simplest: void return, inferred args, fixedArgCount = 1
+ * const format = NSString.stringWithUTF8String$("Hello, %@!");
+ * const name = NSString.stringWithUTF8String$("World");
+ * callVariadicFunction("NSLog", 1, format, name);
+ *
+ * // With explicit types
+ * callVariadicFunction("NSLog", { returns: "v", args: ["@", "i"] }, 1, format, 42);
+ * ```
+ */
+function callVariadicFunction(name: string, ...rest: any[]): any {
+  let options: CallFunctionOptions | null = null;
+  let restIdx = 0;
+
+  if (rest.length > 0 && isCallOptions(rest[0])) {
+    options = rest[0];
+    restIdx = 1;
+  }
+
+  // fixedArgCount must be a number
+  if (restIdx >= rest.length || typeof rest[restIdx] !== "number") {
+    throw new Error("callVariadicFunction requires fixedArgCount as a number parameter");
+  }
+  const fixedArgCount = rest[restIdx];
+  restIdx++;
+
+  const args = rest.slice(restIdx);
+  const { returnType, argTypes } = resolveTypes(options, args);
+
+  // Unwrap NobjcObject proxies to native objects
+  for (let i = 0; i < args.length; i++) {
+    args[i] = unwrapArg(args[i]);
+  }
+  const result = CallFunction(name, returnType, argTypes, fixedArgCount, ...args);
+  return wrapObjCObjectIfNeeded(result);
+}
+
+export {
+  NobjcLibrary,
+  NobjcObject,
+  NobjcMethod,
+  NobjcProtocol,
+  NobjcClass,
+  getPointer,
+  fromPointer,
+  callFunction,
+  callVariadicFunction
+};
