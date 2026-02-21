@@ -159,7 +159,7 @@ inline bool ParseStructFields(const char *&ptr,
     }
 
     // Parse the field's type encoding
-    field.typeEncoding = SkipOneFieldEncoding(ptr);
+    field.typeEncoding = SkipOneTypeEncoding(ptr);
     field.isStruct = (!field.typeEncoding.empty() && field.typeEncoding[0] == '{');
 
     // If this is a nested struct, recursively parse its subfields

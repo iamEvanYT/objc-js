@@ -79,6 +79,7 @@ The library automatically converts between JavaScript and Objective-C types:
 - **Numbers**: JavaScript numbers work with NSInteger, CGFloat, etc.
 - **Objects**: Objective-C objects are wrapped in `NobjcObject` instances
 - **Structs**: Plain JavaScript objects convert to C structs (CGRect, NSRange, etc.) — see [Structs](./structs.md)
+- **Blocks**: JavaScript functions automatically convert to Objective-C blocks — see [Blocks](./blocks.md)
 - **null**: JavaScript `null` maps to Objective-C `nil`
 
 ## Common Frameworks
@@ -144,6 +145,7 @@ See the [C Functions guide](./c-functions.md) for the full type encoding table a
 
 - Learn how to [call C functions](./c-functions.md) (NSLog, NSHomeDirectory, etc.)
 - Learn how to [pass and receive structs](./structs.md) (CGRect, NSRange, etc.)
+- Learn how to [pass blocks](./blocks.md) (enumerateObjectsUsingBlock:, completion handlers, etc.)
 - Learn how to [subclass Objective-C classes](./subclassing.md)
 - Implement [protocols](./protocol-implementation.md)
 - Check the [API reference](./api-reference.md)

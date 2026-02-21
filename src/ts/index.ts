@@ -161,6 +161,20 @@ function unwrapArg(arg: any): any {
   if (arg && typeof arg === "object") {
     return nativeObjectMap.get(arg) ?? arg;
   }
+  // Wrap function arguments so that when called from native (e.g., as ObjC blocks),
+  // the native ObjcObject args are automatically wrapped in NobjcObject proxies.
+  if (typeof arg === "function") {
+    const wrapped = function (...nativeArgs: any[]) {
+      for (let i = 0; i < nativeArgs.length; i++) {
+        nativeArgs[i] = wrapObjCObjectIfNeeded(nativeArgs[i]);
+      }
+      return unwrapArg(arg(...nativeArgs));
+    };
+    // Preserve the original function's .length so the native layer can read it
+    // (used to infer block parameter count when extended encoding is unavailable)
+    Object.defineProperty(wrapped, "length", { value: arg.length });
+    return wrapped;
+  }
   return arg;
 }
 

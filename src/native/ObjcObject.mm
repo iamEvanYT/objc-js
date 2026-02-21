@@ -2,6 +2,7 @@
 #include "bridge.h"
 #include "pointer-utils.h"
 #include "struct-utils.h"
+#include "nobjc_block.h"
 #include <Foundation/Foundation.h>
 #include <napi.h>
 #include <objc/objc.h>
@@ -153,6 +154,8 @@ static bool TryFastMsgSend(Napi::Env env, id target, SEL selector,
     const char *argType = SimplifyTypeEncoding(
         [methodSignature getArgumentTypeAtIndex:i + 2]);
     char code = *argType;
+    // Block args (@?) need special handling — bail out of fast path
+    if (code == '@' && argType[1] == '?') return false;
     if (!IsFastPathArgTypeCode(code)) return false;
     argTypeCodes[i] = code;
     if (code == 'f' || code == 'd') hasFloatArgs = true;
@@ -476,6 +479,28 @@ Napi::Value ObjcObject::$MsgSend(const Napi::CallbackInfo &info) {
       continue;
     }
 
+    // Block argument: convert JS function to ObjC block
+    if (IsBlockTypeEncoding(typeEncoding) && info[i].IsFunction()) {
+      // Get extended encoding from method_getTypeEncoding() which preserves @?<...>
+      // NSMethodSignature strips the extended encoding, so we use the runtime directly.
+      // Argument index in NSInvocation is i+1 (0=self, 1=_cmd, 2+=user args)
+      std::string extEncoding = GetExtendedBlockEncoding(
+          object_getClass(objcObject), selector, i + 1);
+      const char *blockEncoding = extEncoding.empty()
+          ? [methodSignature getArgumentTypeAtIndex:i + 1]
+          : extEncoding.c_str();
+      id block = CreateBlockFromJSFunction(env, info[i], blockEncoding);
+      if (env.IsExceptionPending()) return env.Null();
+      [invocation setArgument:&block atIndex:i + 1];
+      // Store block as id in arg buffer to keep it alive until after invoke
+      if (useHeap) {
+        heapArgBuf.push_back(BaseObjcType{block});
+      } else {
+        smallArgBuf[argIdx] = BaseObjcType{block};
+      }
+      continue;
+    }
+
     auto arg = AsObjCArgument(info[i], typeEncoding, context);
     if (!arg.has_value()) {
       std::string errorMessageStr = std::format("Unsupported argument type {}",
@@ -634,6 +659,10 @@ Napi::Value ObjcObject::$PrepareSend(const Napi::CallbackInfo &info) {
         [methodSignature getArgumentTypeAtIndex:i + 2]);
     char code = *argType;
     prepared->argInfos[i] = {code, code == '{'};
+    // Block args (@?) need slow path for JS function → block conversion
+    if (code == '@' && argType[1] == '?') {
+      canFast = false;
+    }
     if (code == '{' || !IsFastPathArgTypeCode(code)) {
       canFast = false;
     }
@@ -734,6 +763,26 @@ Napi::Value ObjcObject::$MsgSendPrepared(const Napi::CallbackInfo &info) {
         heapArgBuf.push_back(BaseObjcType{std::monostate{}});
       } else {
         smallArgBuf[i] = BaseObjcType{std::monostate{}};
+      }
+      continue;
+    }
+
+    // Block argument: convert JS function to ObjC block
+    if (IsBlockTypeEncoding(typeEncoding) && info[jsArgIdx].IsFunction()) {
+      // Get extended encoding from method_getTypeEncoding() which preserves @?<...>
+      // Argument index in NSInvocation is i+2 (0=self, 1=_cmd, 2+=user args)
+      std::string extEncoding = GetExtendedBlockEncoding(
+          object_getClass(objcObject), prepared->selector, i + 2);
+      const char *blockEncoding = extEncoding.empty()
+          ? [prepared->methodSignature getArgumentTypeAtIndex:i + 2]
+          : extEncoding.c_str();
+      id block = CreateBlockFromJSFunction(env, info[jsArgIdx], blockEncoding);
+      if (env.IsExceptionPending()) return env.Null();
+      [invocation setArgument:&block atIndex:i + 2];
+      if (useHeap) {
+        heapArgBuf.push_back(BaseObjcType{block});
+      } else {
+        smallArgBuf[i] = BaseObjcType{block};
       }
       continue;
     }

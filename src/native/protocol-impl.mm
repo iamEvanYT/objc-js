@@ -1,5 +1,6 @@
 #include "protocol-impl.h"
 #include "debug.h"
+#include "forwarding-common.h"
 #include "method-forwarding.h"
 #include "ObjcObject.h"
 #include "protocol-manager.h"
@@ -37,10 +38,7 @@ std::vector<std::string> ParseMethodSignature(const char *typeEncoding) {
     const char *typeStart = ptr;
 
     // Handle type qualifiers
-    while (*ptr == 'r' || *ptr == 'n' || *ptr == 'N' || *ptr == 'o' ||
-           *ptr == 'O' || *ptr == 'R' || *ptr == 'V') {
-      ptr++;
-    }
+    SkipTypeQualifiers(ptr);
 
     // Get the main type character
     if (*ptr) {
@@ -205,14 +203,8 @@ Napi::Value CreateProtocolImplementation(const Napi::CallbackInfo &info) {
     }
 
     // Create a ThreadSafeFunction for this callback
-    Napi::ThreadSafeFunction tsfn = Napi::ThreadSafeFunction::New(
-        env,
-        jsCallback,         // The JS function to call
-        "ProtocolCallback", // Resource name
-        0,                  // Max queue size (0 = unlimited)
-        1,                  // Initial thread count
-        [](Napi::Env) {}    // Finalizer (no context to clean up)
-    );
+    Napi::ThreadSafeFunction tsfn = CreateMethodTSFN(env, jsCallback,
+                                                      "ProtocolCallback");
 
     // Store method info (TSFN, JS callback, type encoding) in single map
     impl.methods[selector] = ProtocolMethodInfo{

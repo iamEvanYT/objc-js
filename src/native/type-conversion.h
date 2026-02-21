@@ -35,6 +35,26 @@
 
 // MARK: - Type Encoding Utilities
 
+/**
+ * Check if a character is an ObjC type qualifier.
+ * r=const, n=in, N=inout, o=out, O=bycopy, R=byref, V=oneway
+ */
+inline bool IsTypeQualifier(char c) {
+  return c == 'r' || c == 'n' || c == 'N' || c == 'o' ||
+         c == 'O' || c == 'R' || c == 'V';
+}
+
+/**
+ * Advance a pointer past any leading ObjC type qualifiers (rnNoORV).
+ * This is the canonical helper for qualifier skipping — use it everywhere
+ * instead of inline while loops.
+ */
+inline void SkipTypeQualifiers(const char *&ptr) {
+  while (*ptr && IsTypeQualifier(*ptr)) {
+    ++ptr;
+  }
+}
+
 // Helper class to manage the lifetime of simplified type encodings
 // Optimized to use pointer offset instead of string::erase()
 class SimplifiedTypeEncoding {
@@ -42,21 +62,14 @@ private:
   const char* original;
   size_t offset;  // Offset past any leading qualifiers
 
-  // Check if a character is a type qualifier
-  static bool IsQualifier(char c) {
-    // r=const, n=in, N=inout, o=out, O=bycopy, R=byref, V=oneway
-    return c == 'r' || c == 'n' || c == 'N' || c == 'o' ||
-           c == 'O' || c == 'R' || c == 'V';
-  }
-
 public:
   SimplifiedTypeEncoding(const char *typeEncoding) 
       : original(typeEncoding), offset(0) {
     // Skip leading qualifiers using pointer arithmetic (O(k) where k = qualifier count)
     if (original) {
-      while (original[offset] != '\0' && IsQualifier(original[offset])) {
-        ++offset;
-      }
+      const char *ptr = original;
+      SkipTypeQualifiers(ptr);
+      offset = ptr - original;
     }
   }
 
@@ -74,13 +87,8 @@ public:
 // Optimized to use pointer arithmetic instead of string mutations
 inline const char *SimplifyTypeEncoding(const char *typeEncoding) {
   if (!typeEncoding) return "";
-  
-  // Skip leading qualifiers using pointer arithmetic
   const char* ptr = typeEncoding;
-  while (*ptr == 'r' || *ptr == 'n' || *ptr == 'N' || *ptr == 'o' ||
-         *ptr == 'O' || *ptr == 'R' || *ptr == 'V') {
-    ++ptr;
-  }
+  SkipTypeQualifiers(ptr);
   return ptr;
 }
 
@@ -131,22 +139,54 @@ inline StructEncodingHeader ParseStructEncodingHeader(const char *encoding) {
 }
 
 /**
- * Advance a pointer past one complete field type encoding.
- * Handles nested structs {}, unions (), pointers ^, and simple types.
- * Returns the encoding string for the field.
+ * Advance a pointer past one complete type encoding.
+ *
+ * This is the unified type encoding parser used throughout the codebase.
+ * It handles all ObjC type encoding forms:
+ *   - @?       Block type (two-character encoding)
+ *   - @?<...>  Block with extended signature
+ *   - @"..."   Object with protocol/class name
+ *   - @        Object type
+ *   - {...}    Struct type
+ *   - (...)    Union type
+ *   - ^T       Pointer to type T (recursive)
+ *   - X        Simple single-character type
+ *
+ * Does NOT skip leading type qualifiers or trailing offset digits —
+ * callers should use SkipTypeQualifiers() and skip digits as needed.
+ *
+ * Returns the encoding string for the parsed type.
  */
-inline std::string SkipOneFieldEncoding(const char *&ptr) {
+inline std::string SkipOneTypeEncoding(const char *&ptr) {
   const char *start = ptr;
 
-  if (*ptr == '{') {
-    // Nested struct — find matching '}'
+  if (*ptr == '@' && *(ptr + 1) == '?') {
+    // Block type @? — possibly with extended encoding @?<...>
+    ptr += 2;
+    if (*ptr == '<') {
+      int depth = 1;
+      ptr++;
+      while (*ptr && depth > 0) {
+        if (*ptr == '<') depth++;
+        else if (*ptr == '>') depth--;
+        ptr++;
+      }
+    }
+  } else if (*ptr == '@') {
+    // Object type — possibly with quoted class/protocol name @"NSString"
+    ptr++;
+    if (*ptr == '"') {
+      ptr++;
+      while (*ptr && *ptr != '"') ptr++;
+      if (*ptr == '"') ptr++;
+    }
+  } else if (*ptr == '{') {
+    // Struct — find matching '}'
     int depth = 1;
     ptr++;
     while (*ptr && depth > 0) {
-      if (*ptr == '{')
-        depth++;
-      else if (*ptr == '}')
-        depth--;
+      if (*ptr == '{') depth++;
+      else if (*ptr == '}') depth--;
       ptr++;
     }
   } else if (*ptr == '(') {
@@ -154,37 +194,25 @@ inline std::string SkipOneFieldEncoding(const char *&ptr) {
     int depth = 1;
     ptr++;
     while (*ptr && depth > 0) {
-      if (*ptr == '(')
-        depth++;
-      else if (*ptr == ')')
-        depth--;
+      if (*ptr == '(') depth++;
+      else if (*ptr == ')') depth--;
       ptr++;
     }
   } else if (*ptr == '^') {
-    // Pointer type — skip '^' and the pointed-to type
+    // Pointer type — skip '^' and the pointed-to type (recursive)
     ptr++;
-    if (*ptr == '{') {
-      int depth = 1;
-      ptr++;
-      while (*ptr && depth > 0) {
-        if (*ptr == '{')
-          depth++;
-        else if (*ptr == '}')
-          depth--;
-        ptr++;
-      }
-    } else if (*ptr) {
-      ptr++;
-    }
-  } else {
-    // Simple type — single character, skip any trailing digits
+    SkipOneTypeEncoding(ptr);
+  } else if (*ptr) {
+    // Simple type — single character (c, i, s, l, q, C, I, S, L, Q, f, d, B, etc.)
     ptr++;
-    while (*ptr && isdigit(*ptr)) {
-      ptr++;
-    }
   }
 
   return std::string(start, ptr - start);
+}
+
+// Backward-compatible alias (deprecated — use SkipOneTypeEncoding instead)
+inline std::string SkipOneFieldEncoding(const char *&ptr) {
+  return SkipOneTypeEncoding(ptr);
 }
 
 // MARK: - ObjC to JS Conversion

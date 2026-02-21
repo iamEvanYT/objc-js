@@ -158,16 +158,7 @@ bool FallbackToTSFN(Napi::ThreadSafeFunction &tsfn, InvocationData *data,
   }
 
   // Wait for callback by pumping CFRunLoop
-  CFTimeInterval timeout = 0.001; // 1ms per iteration
-  while (true) {
-    {
-      std::unique_lock<std::mutex> lock(completionMutex);
-      if (isComplete) {
-        break;
-      }
-    }
-    CFRunLoopRunInMode(kCFRunLoopDefaultMode, timeout, true);
-  }
+  PumpRunLoopUntilComplete(completionMutex, isComplete);
   
   return true;
 }

@@ -135,22 +135,8 @@ void ForwardInvocationCommon(NSInvocation *invocation,
     }
 
     // Wait for callback by pumping CFRunLoop
-    int iterations = 0;
-
-    while (true) {
-      {
-        std::unique_lock<std::mutex> lock(completionMutex);
-        if (isComplete) {
-          break;
-        }
-      }
-      iterations++;
-      if (iterations % nobjc::kRunLoopDebugLogInterval == 0) {
-        NOBJC_LOG("ForwardInvocationCommon: Still waiting... (%d iterations)",
-                  iterations);
-      }
-      CFRunLoopRunInMode(kCFRunLoopDefaultMode, nobjc::kRunLoopPumpInterval, true);
-    }
+    PumpRunLoopUntilComplete(completionMutex, isComplete,
+                            "ForwardInvocationCommon");
     // Data cleaned up in callback
   }
 

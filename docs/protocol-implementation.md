@@ -40,28 +40,28 @@ authController.setDelegate$(delegate);
 
 Method names use the `$` notation to represent colons in Objective-C selectors:
 
-| Objective-C Selector | JavaScript Method Name |
-| --- | --- |
-| `method` | `method` |
-| `method:` | `method$` |
-| `method:withArg:` | `method$withArg$` |
+| Objective-C Selector                                    | JavaScript Method Name                                  |
+| ------------------------------------------------------- | ------------------------------------------------------- |
+| `method`                                                | `method`                                                |
+| `method:`                                               | `method$`                                               |
+| `method:withArg:`                                       | `method$withArg$`                                       |
 | `authorizationController:didCompleteWithAuthorization:` | `authorizationController$didCompleteWithAuthorization$` |
 
 ## Type Conversion
 
 Arguments and return values are automatically converted between JavaScript and Objective-C:
 
-| Objective-C Type | JavaScript Type | Notes |
-| --- | --- | --- |
-| `char`, `int`, `short`, `long`, `long long` | `number` | Signed integers |
-| `unsigned char`, `unsigned int`, etc. | `number` | Unsigned integers |
-| `float`, `double` | `number` | Floating point |
-| `BOOL` | `boolean` | Boolean values |
-| `char *` | `string` | C strings |
-| `id`, `NSObject *` | `NobjcObject` | Objective-C objects |
-| `Class` | `NobjcObject` | Objective-C classes |
-| `SEL` | `string` | Selectors as strings |
-| `nil` | `null` | Null values |
+| Objective-C Type                            | JavaScript Type | Notes                |
+| ------------------------------------------- | --------------- | -------------------- |
+| `char`, `int`, `short`, `long`, `long long` | `number`        | Signed integers      |
+| `unsigned char`, `unsigned int`, etc.       | `number`        | Unsigned integers    |
+| `float`, `double`                           | `number`        | Floating point       |
+| `BOOL`                                      | `boolean`       | Boolean values       |
+| `char *`                                    | `string`        | C strings            |
+| `id`, `NSObject *`                          | `NobjcObject`   | Objective-C objects  |
+| `Class`                                     | `NobjcObject`   | Objective-C classes  |
+| `SEL`                                       | `string`        | Selectors as strings |
+| `nil`                                       | `null`          | Null values          |
 
 ## Memory Management
 
@@ -110,7 +110,6 @@ When a protocol is found, method signatures are retrieved from the protocol meta
 1. **Thread Safety**: Add support for callbacks from non-JavaScript threads
 2. **Better Pointer Handling**: Improve support for arbitrary pointer types
 3. **Struct Support**: Add support for passing structs by value
-4. **Block Support**: Add support for block arguments
 
 ## Examples
 

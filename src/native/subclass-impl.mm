@@ -370,9 +370,8 @@ Napi::Value DefineClass(const Napi::CallbackInfo &info) {
       SEL selector = sel_registerName(selectorName.c_str());
 
       // Create ThreadSafeFunction
-      Napi::ThreadSafeFunction tsfn = Napi::ThreadSafeFunction::New(
-          env, jsImpl, "SubclassMethod_" + selectorName, 0, 1,
-          [](Napi::Env) {});
+      Napi::ThreadSafeFunction tsfn = CreateMethodTSFN(
+          env, jsImpl, "SubclassMethod_" + selectorName);
 
       // Store method info
       SubclassMethodInfo methodInfo{

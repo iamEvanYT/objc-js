@@ -208,7 +208,7 @@ inline ffi_type* ParseStructEncoding(const char* encoding, size_t* outSize,
     
     if (*ptr == '}') break;
     
-    std::string fieldEncoding = SkipOneFieldEncoding(ptr);
+    std::string fieldEncoding = SkipOneTypeEncoding(ptr);
     NOBJC_LOG("ParseStructEncoding: parsing field '%s'", fieldEncoding.c_str());
     
     // Recursively get FFI type for this field
@@ -271,6 +271,14 @@ inline ffi_type* GetFFITypeForEncoding(const char* encoding, size_t* outSize,
   
   char firstChar = simpleEncoding[0];
   
+  // Handle block type (@?) — blocks are pointers
+  if (firstChar == '@' && simpleEncoding[1] == '?') {
+    if (outSize) {
+      *outSize = sizeof(void*);
+    }
+    return &ffi_type_pointer;
+  }
+
   // Handle structs and unions
   if (firstChar == '{') {
     return ParseStructEncoding(simpleEncoding, outSize, allocatedTypes);

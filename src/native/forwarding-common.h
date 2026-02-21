@@ -3,10 +3,15 @@
 
 #include "memory-utils.h"
 #include "protocol-storage.h"
+#include "constants.h"
+#include "debug.h"
 #include <cstring>
+#include <condition_variable>
 #include <functional>
+#include <mutex>
 #include <napi.h>
 #include <optional>
+#include <CoreFoundation/CoreFoundation.h>
 
 #ifdef __OBJC__
 @class NSInvocation;
@@ -105,6 +110,46 @@ struct ForwardingCallbacks {
   // What callback type to use
   CallbackType callbackType;
 };
+
+// MARK: - Shared Helpers
+
+/**
+ * Pump the CFRunLoop until a completion flag is set.
+ * Used by protocol forwarding, subclass forwarding, and block invocation
+ * to wait for cross-thread JS callbacks to complete.
+ *
+ * @param mutex      Mutex protecting the isComplete flag
+ * @param isComplete Flag set to true when the JS callback completes
+ * @param label      Optional label for debug logging (nullptr to disable)
+ */
+inline void PumpRunLoopUntilComplete(std::mutex &mutex, bool &isComplete,
+                                     const char *label = nullptr) {
+  int iterations = 0;
+  while (true) {
+    {
+      std::unique_lock<std::mutex> lock(mutex);
+      if (isComplete) break;
+    }
+    iterations++;
+    if (label && iterations % nobjc::kRunLoopDebugLogInterval == 0) {
+      NOBJC_LOG("%s: Still waiting... (%d iterations)", label, iterations);
+    }
+    CFRunLoopRunInMode(kCFRunLoopDefaultMode, nobjc::kRunLoopPumpInterval, true);
+  }
+}
+
+/**
+ * Create a ThreadSafeFunction for method forwarding.
+ * Shared factory for protocol, subclass, and block TSFN creation.
+ *
+ * @param env   Napi environment
+ * @param fn    The JS function to wrap
+ * @param name  Resource name for debugging
+ */
+inline Napi::ThreadSafeFunction CreateMethodTSFN(
+    Napi::Env env, const Napi::Function &fn, const std::string &name) {
+  return Napi::ThreadSafeFunction::New(env, fn, name, 0, 1, [](Napi::Env) {});
+}
 
 // MARK: - Common Implementation
 
