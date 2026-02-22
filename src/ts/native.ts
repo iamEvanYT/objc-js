@@ -16,7 +16,8 @@ const {
   CreateProtocolImplementation,
   DefineClass,
   CallSuper,
-  CallFunction
+  CallFunction,
+  PumpRunLoop
 } = binding;
 export {
   LoadLibrary,
@@ -27,6 +28,7 @@ export {
   CreateProtocolImplementation,
   DefineClass,
   CallSuper,
-  CallFunction
+  CallFunction,
+  PumpRunLoop
 };
 export type { _binding as NobjcNative };

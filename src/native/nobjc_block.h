@@ -771,7 +771,7 @@ inline id CreateBlockFromJSFunction(Napi::Env env,
   blockInfo->descriptor.size = sizeof(NobjcBlockLiteral);
 
   blockInfo->blockLiteral.isa = _NSConcreteStackBlock;
-  blockInfo->blockLiteral.flags = (1 << 30);  // BLOCK_HAS_SIGNATURE (not strictly needed but harmless)
+  blockInfo->blockLiteral.flags = 0;  // No flags — we don't provide copy/dispose helpers or a signature field in the descriptor
   blockInfo->blockLiteral.reserved = 0;
   blockInfo->blockLiteral.invoke = codePtr;
   blockInfo->blockLiteral.descriptor = &blockInfo->descriptor;

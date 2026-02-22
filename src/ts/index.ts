@@ -723,12 +723,116 @@ function callVariadicFunction(name: string, ...rest: any[]): any {
   return wrapObjCObjectIfNeeded(result);
 }
 
+/**
+ * Utilities for pumping the macOS CFRunLoop from a Node.js/Bun event loop.
+ *
+ * Required for async Objective-C callbacks (completion handlers, AppKit events, etc.)
+ * to be delivered, since Node.js/Bun don't automatically pump the CFRunLoop.
+ *
+ * Usage:
+ *   RunLoop.run();   // Start pumping (returns a cleanup function)
+ *   RunLoop.pump();  // Pump once (non-blocking)
+ */
+const RunLoop = {
+  _timer: null as ReturnType<typeof setInterval> | null,
+  _mainRunLoop: null as any,
+  _defaultMode: null as any,
+  _NSDate: null as any,
+
+  /**
+   * Lazily initialise NSRunLoop and NSDefaultRunLoopMode references.
+   * Foundation is already loaded by the time any ObjC work happens, so
+   * GetClassObject will succeed without an explicit LoadLibrary call.
+   *
+   * We use proxy-wrapped NobjcObjects (via wrapObjCObjectIfNeeded) rather
+   * than raw native ObjcObjects + $msgSend, because Bun's N-API crashes
+   * when CFRunLoopRunInMode is triggered from the $msgSend C++ path.
+   * The proxy path ($prepareSend + $msgSendPrepared) works on both runtimes.
+   */
+  _ensureRunLoop() {
+    if (this._mainRunLoop === null) {
+      // Ensure Foundation is loaded — NobjcLibrary uses lazy loading,
+      // so Foundation may not be loaded yet if no class has been accessed.
+      LoadLibrary("/System/Library/Frameworks/Foundation.framework/Foundation");
+      const NSRunLoopRaw = GetClassObject("NSRunLoop");
+      if (!NSRunLoopRaw) {
+        throw new Error(
+          "Foundation framework is not loaded. Create a NobjcLibrary for Foundation before using RunLoop."
+        );
+      }
+      const NSRunLoop = wrapObjCObjectIfNeeded(NSRunLoopRaw) as any;
+      this._mainRunLoop = NSRunLoop.mainRunLoop();
+
+      const NSStringRaw = GetClassObject("NSString")!;
+      const NSString = wrapObjCObjectIfNeeded(NSStringRaw) as any;
+      this._defaultMode = NSString.stringWithUTF8String$("kCFRunLoopDefaultMode");
+
+      const NSDateRaw = GetClassObject("NSDate")!;
+      this._NSDate = wrapObjCObjectIfNeeded(NSDateRaw) as any;
+    }
+  },
+
+  /**
+   * Pump the run loop once. Processes any pending run loop sources
+   * (AppKit events, dispatch_async to main queue, timers, etc.)
+   * without blocking.
+   *
+   * @param timeout Optional timeout in seconds (default: 0)
+   * @returns true if a source was processed
+   */
+  pump(timeout?: number): boolean {
+    this._ensureRunLoop();
+    const limitDate = this._NSDate.dateWithTimeIntervalSinceNow$(timeout ?? 0);
+    const handled = this._mainRunLoop.runMode$beforeDate$(this._defaultMode, limitDate);
+    return !!handled;
+  },
+
+  /**
+   * Start continuously pumping the run loop on a regular interval.
+   * This enables async Objective-C callbacks to be delivered.
+   *
+   * @param intervalMs Pump interval in milliseconds (default: 10)
+   * @returns A cleanup function that stops pumping
+   */
+  run(intervalMs: number = 10): () => void {
+    if (this._timer !== null) {
+      clearInterval(this._timer);
+    }
+
+    // Eagerly initialise so the first interval tick is cheap
+    this._ensureRunLoop();
+
+    this._timer = setInterval(() => {
+      const limitDate = this._NSDate.dateWithTimeIntervalSinceNow$(0);
+      this._mainRunLoop.runMode$beforeDate$(this._defaultMode, limitDate);
+    }, intervalMs);
+    // Unref the timer so it doesn't prevent the process from exiting
+    // when there are no other active handles
+    if (this._timer && typeof this._timer === "object" && "unref" in this._timer) {
+      (this._timer as any).unref();
+    }
+    const stop = () => this.stop();
+    return stop;
+  },
+
+  /**
+   * Stop pumping the run loop.
+   */
+  stop(): void {
+    if (this._timer !== null) {
+      clearInterval(this._timer);
+      this._timer = null;
+    }
+  }
+};
+
 export {
   NobjcLibrary,
   NobjcObject,
   NobjcMethod,
   NobjcProtocol,
   NobjcClass,
+  RunLoop,
   getPointer,
   fromPointer,
   callFunction,

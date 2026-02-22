@@ -71,4 +71,17 @@ declare module "#nobjc_native" {
     fixedArgCount: number,
     ...args: any[]
   ): any;
+
+  /**
+   * Pump the macOS CFRunLoop in default mode.
+   * Processes any pending run loop sources (AppKit events, dispatch_async to main queue,
+   * timers, etc.) and returns immediately if none are pending.
+   *
+   * Required for async Objective-C callbacks (e.g., completion handlers) to be delivered
+   * in a Node.js/Bun environment, where the CFRunLoop is not automatically pumped.
+   *
+   * @param timeout Optional timeout in seconds (default: 0, non-blocking)
+   * @returns true if a source was processed, false otherwise
+   */
+  export function PumpRunLoop(timeout?: number): boolean;
 }

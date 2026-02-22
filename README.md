@@ -37,6 +37,7 @@ The documentation is organized into several guides:
 - **[Structs](./docs/structs.md)** - Passing and receiving C structs (CGRect, NSRange, etc.)
 - **[Subclassing Objective-C Classes](./docs/subclassing.md)** - Creating and subclassing Objective-C classes from JavaScript
 - **[Blocks](./docs/blocks.md)** - Passing JavaScript functions as Objective-C blocks (closures)
+- **[Run Loop](./docs/run-loop.md)** - Pumping the CFRunLoop for async callback delivery (completion handlers, etc.)
 - **[Protocol Implementation](./docs/protocol-implementation.md)** - Creating delegate objects that implement protocols
 - **[API Reference](./docs/api-reference.md)** - Complete API documentation for all classes and functions
 

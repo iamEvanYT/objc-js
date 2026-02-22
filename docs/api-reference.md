@@ -506,6 +506,68 @@ callVariadicFunction("NSLog", { args: ["@", "i"] }, 1, intFmt, 42);
 
 See [C Functions Documentation](./c-functions.md) for more examples.
 
+## RunLoop
+
+Utility object for pumping the macOS CFRunLoop from Node.js or Bun. Required for async Objective-C callbacks (completion handlers, AppKit events, etc.) to be delivered.
+
+### RunLoop.pump()
+
+Pump the CFRunLoop once. Processes any pending run loop sources and returns immediately if none are pending.
+
+```typescript
+RunLoop.pump(timeout?: number): boolean
+```
+
+**Parameters:**
+
+- `timeout` (number, optional): Timeout in seconds. Default: `0` (non-blocking)
+
+**Returns:** `true` if a source was processed, `false` otherwise.
+
+### RunLoop.run()
+
+Start continuously pumping the CFRunLoop on a regular interval.
+
+```typescript
+RunLoop.run(intervalMs?: number): () => void
+```
+
+**Parameters:**
+
+- `intervalMs` (number, optional): Pump interval in milliseconds. Default: `10`
+
+**Returns:** A cleanup function that stops pumping when called.
+
+The internal timer is `unref()`'d so it does not prevent the process from exiting on its own.
+
+### RunLoop.stop()
+
+Stop pumping the CFRunLoop. Safe to call even if not currently pumping.
+
+```typescript
+RunLoop.stop(): void
+```
+
+**Example:**
+
+```typescript
+import { NobjcLibrary, RunLoop } from "objc-js";
+
+const appKit = new NobjcLibrary("/System/Library/Frameworks/AppKit.framework/AppKit");
+const NSColorSampler = appKit["NSColorSampler"];
+
+// Start pumping
+const stop = RunLoop.run();
+
+const sampler = NSColorSampler.alloc().init();
+sampler.showSamplerWithSelectionHandler$((color) => {
+  console.log("Color:", color?.description().UTF8String());
+  stop(); // Stop when done
+});
+```
+
+See [Run Loop Documentation](./run-loop.md) for a full guide on when and why run loop pumping is needed.
+
 ## Framework Paths
 
 Common framework paths for macOS:
@@ -559,6 +621,8 @@ Most macOS system frameworks follow the same path pattern:
 - [Basic Usage](./basic-usage.md)
 - [C Functions](./c-functions.md)
 - [Structs](./structs.md)
+- [Blocks](./blocks.md)
+- [Run Loop](./run-loop.md)
 - [Subclassing Documentation](./subclassing.md)
 - [Protocol Implementation Documentation](./protocol-implementation.md)
 

@@ -79,6 +79,30 @@ Napi::Value FromPointer(const Napi::CallbackInfo &info) {
   return ObjcObject::NewInstance(env, reinterpret_cast<id>(ptr));
 }
 
+Napi::Value PumpRunLoop(const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
+  
+  // Default timeout
+  NSTimeInterval timeout = 0.0;  // Don't block — just process pending sources
+  
+  // Optional: accept a timeout in seconds as the first argument
+  if (info.Length() >= 1 && info[0].IsNumber()) {
+    timeout = info[0].As<Napi::Number>().DoubleValue();
+  }
+  
+  // Pump the main run loop via NSRunLoop API.
+  // We use NSRunLoop instead of CFRunLoopRunInMode because the CF function
+  // crashes under Bun's N-API implementation (segfault in the CF call).
+  // NSRunLoop.runMode:beforeDate: is functionally equivalent and works
+  // correctly in both Node.js and Bun.
+  @autoreleasepool {
+    NSRunLoop *mainLoop = [NSRunLoop mainRunLoop];
+    NSDate *limitDate = [NSDate dateWithTimeIntervalSinceNow:timeout];
+    BOOL handled = [mainLoop runMode:NSDefaultRunLoopMode beforeDate:limitDate];
+    return Napi::Boolean::New(env, handled);
+  }
+}
+
 Napi::Object InitAll(Napi::Env env, Napi::Object exports) {
   ObjcObject::Init(env, exports);
   exports.Set("LoadLibrary", Napi::Function::New(env, LoadLibrary));
@@ -90,6 +114,7 @@ Napi::Object InitAll(Napi::Env env, Napi::Object exports) {
   exports.Set("DefineClass", Napi::Function::New(env, DefineClass));
   exports.Set("CallSuper", Napi::Function::New(env, CallSuper));
   exports.Set("CallFunction", Napi::Function::New(env, CallFunction));
+  exports.Set("PumpRunLoop", Napi::Function::New(env, PumpRunLoop));
   return exports;
 }
 

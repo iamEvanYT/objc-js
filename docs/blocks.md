@@ -103,6 +103,47 @@ Block arguments are converted using the same rules as the rest of the bridge:
 
 Block return values are converted back to Objective-C types when the block has a non-void return type.
 
+## Async Blocks (Completion Handlers)
+
+Blocks passed as completion handlers to async APIs work automatically, but the callback will only be delivered if the macOS CFRunLoop is being pumped. Node.js and Bun don't pump the CFRunLoop on their own, so you need to use `RunLoop.run()` to enable delivery.
+
+### Example: NSColorSampler
+
+```typescript
+import { NobjcLibrary, RunLoop } from "objc-js";
+
+const appKit = new NobjcLibrary("/System/Library/Frameworks/AppKit.framework/AppKit");
+const NSApplication = appKit["NSApplication"];
+const NSColorSampler = appKit["NSColorSampler"];
+
+// Initialize NSApplication (required for AppKit UI)
+NSApplication.sharedApplication();
+
+// Start pumping the run loop so async callbacks are delivered
+const stop = RunLoop.run();
+
+const sampler = NSColorSampler.alloc().init();
+sampler.showSamplerWithSelectionHandler$((color) => {
+  if (color) {
+    console.log("Color:", color.description().UTF8String());
+  } else {
+    console.log("Cancelled");
+  }
+  stop(); // Stop pumping when done
+});
+```
+
+### When Do You Need RunLoop?
+
+| Block Type               | Example                            | Needs RunLoop? |
+| ------------------------ | ---------------------------------- | -------------- |
+| Synchronous enumeration  | `enumerateObjectsUsingBlock:`      | No             |
+| Synchronous sorting      | `sortedArrayUsingComparator:`      | No             |
+| Async completion handler | `showSamplerWithSelectionHandler:` | Yes            |
+| Async dispatch to main   | Any callback via main queue        | Yes            |
+
+See the [Run Loop guide](./run-loop.md) for full details on `RunLoop.run()`, `RunLoop.pump()`, and `RunLoop.stop()`.
+
 ## Limitations
 
 1. **No `stop` pointer support**: The `BOOL *stop` parameter in enumeration blocks is passed as a raw number. Setting `*stop = YES` to stop enumeration early is not currently supported from JavaScript.
@@ -111,6 +152,7 @@ Block return values are converted back to Objective-C types when the block has a
 
 ## See Also
 
+- [Run Loop](./run-loop.md) -- required for async completion handler delivery
 - [Basic Usage](./basic-usage.md)
 - [Protocol Implementation](./protocol-implementation.md) -- for delegate callbacks
 - [Subclassing](./subclassing.md) -- for overriding methods
