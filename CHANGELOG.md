@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.1] - 2026-02-22
+
+- fix: custom inspect symbol not being set on native objects
+- speculative fix: retain ObjC objects in JS wrappers to prevent use-after-free
+- fix: `then` method erroring
+
 ## [1.3.0] - 2026-02-21
 
 - feat: add block support
