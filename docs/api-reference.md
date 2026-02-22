@@ -548,9 +548,11 @@ Provides graphics-related functionality.
 
 Most macOS system frameworks follow the same path pattern:
 
-```typescript
-/System/Labirry / Frameworks / [FrameworkName].framework / [FrameworkName];
 ```
+/System/Library/Frameworks/[FrameworkName].framework/[FrameworkName]
+```
+
+> **Note:** For pure-C frameworks like CoreFoundation, CoreGraphics, and the Accessibility API, consider using **[objcjs-extra](https://www.npmjs.com/package/objcjs-extra)** which provides typed, ergonomic bindings instead of raw `callFunction` with type encoding strings.
 
 ## See Also
 
@@ -559,3 +561,34 @@ Most macOS system frameworks follow the same path pattern:
 - [Structs](./structs.md)
 - [Subclassing Documentation](./subclassing.md)
 - [Protocol Implementation Documentation](./protocol-implementation.md)
+
+## Companion Packages
+
+### objcjs-types
+
+Auto-generated TypeScript type definitions for macOS Objective-C frameworks. Provides IntelliSense, autocompletion, and compile-time type checking for classes, protocols, enums, and methods.
+
+```bash
+npm install objcjs-types
+```
+
+```typescript
+import type { NSWindow, NSApplicationDelegate } from "objcjs-types/AppKit";
+import type { CGPoint, CGSize, CGRect } from "objcjs-types/structs";
+```
+
+### objcjs-extra
+
+Hand-written FFI bindings for macOS pure-C frameworks that have no Objective-C metadata. Covers CoreFoundation, CoreGraphics, ApplicationServices (Accessibility), Security, CoreServices (FSEvents, Launch Services), IOKit, CoreText, ImageIO, CoreAudio, Network, CoreMedia, and Accelerate. Works with both Bun and Node.js (via koffi).
+
+```bash
+npm install objcjs-extra koffi    # Node.js
+bun add objcjs-extra              # Bun
+```
+
+```typescript
+import { CFRunLoopRun, CFRunLoopGetCurrent } from "objcjs-extra/CoreFoundation";
+import { AXUIElementCreateApplication } from "objcjs-extra/ApplicationServices";
+import { SecRandomBytes } from "objcjs-extra/Security";
+import { getAvailableFontFamilies } from "objcjs-extra/CoreText";
+```

@@ -141,6 +141,25 @@ callVariadicFunction("NSLog", 1, format, name);
 
 See the [C Functions guide](./c-functions.md) for the full type encoding table and more examples.
 
+## Companion Packages
+
+objc-js focuses on bridging Objective-C classes and methods. Two companion packages extend coverage to TypeScript types and pure-C frameworks:
+
+- **[objcjs-types](https://www.npmjs.com/package/objcjs-types)** — Auto-generated TypeScript definitions for macOS Objective-C frameworks. Add `import type { NSWindow } from "objcjs-types/AppKit"` for full IntelliSense and type checking.
+- **[objcjs-extra](https://www.npmjs.com/package/objcjs-extra)** — Hand-written FFI bindings for pure-C frameworks (CoreFoundation, CoreGraphics, Accessibility, Security, CoreAudio, IOKit, and more) that have no Objective-C metadata and can't be auto-generated. Works with both Bun and Node.js.
+
+```typescript
+// Use objc-js for Objective-C APIs
+import { NobjcLibrary } from "objc-js";
+const workspace = new NobjcLibrary("/System/Library/Frameworks/AppKit.framework/AppKit")[
+  "NSWorkspace"
+].sharedWorkspace();
+
+// Use objcjs-extra for pure-C APIs
+import { AXUIElementCreateApplication, AXIsProcessTrusted } from "objcjs-extra/ApplicationServices";
+import { CGEventCreateKeyboardEvent, CGEventPost } from "objcjs-extra/CoreGraphics";
+```
+
 ## Next Steps
 
 - Learn how to [call C functions](./c-functions.md) (NSLog, NSHomeDirectory, etc.)

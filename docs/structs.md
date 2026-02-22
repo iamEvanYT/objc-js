@@ -192,3 +192,16 @@ NSApplication.sharedApplication().run();
 
 - [Basic Usage](./basic-usage.md)
 - [API Reference](./api-reference.md)
+
+## TypeScript Types for Structs (objcjs-types)
+
+The **[objcjs-types](https://www.npmjs.com/package/objcjs-types)** companion package provides TypeScript type definitions for common structs, so you can type-check your struct values at compile time:
+
+```typescript
+import type { CGPoint, CGSize, CGRect, NSRange } from "objcjs-types/structs";
+
+const frame: CGRect = {
+  origin: { x: 100, y: 100 },
+  size: { width: 800, height: 600 }
+};
+```

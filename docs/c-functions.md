@@ -242,3 +242,21 @@ If a function comes from a different framework (e.g., CoreGraphics), load that f
 - [Basic Usage](./basic-usage.md)
 - [Structs](./structs.md)
 - [API Reference](./api-reference.md)
+
+## Pure-C Framework Bindings (objcjs-extra)
+
+`callFunction` is useful for one-off C function calls, but if you need comprehensive bindings for an entire pure-C framework (CoreFoundation, CoreGraphics, Accessibility API, Security, CoreAudio, etc.), consider using **[objcjs-extra](https://www.npmjs.com/package/objcjs-extra)**.
+
+objcjs-extra provides hand-written, typed bindings for 12 macOS C frameworks with proper function signatures, constants, and high-level helpers — no type encoding strings needed:
+
+```typescript
+// Instead of manually calling C functions with type encodings:
+import { callFunction } from "objc-js";
+const result = callFunction("CGEventSourceCreate", { returns: "^v", args: ["i"] }, 1);
+
+// Use objcjs-extra for a typed, ergonomic API:
+import { CGEventSourceCreate, CGEventSourceStateID } from "objcjs-extra/CoreGraphics";
+const source = CGEventSourceCreate(CGEventSourceStateID.CombinedSessionState);
+```
+
+See the [objcjs-extra README](https://github.com/iamEvanYT/objcjs-extra) for available frameworks and usage.
