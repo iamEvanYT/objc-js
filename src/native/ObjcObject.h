@@ -4,10 +4,17 @@
 #include <napi.h>
 #include <objc/objc.h>
 #include <objc/runtime.h>
+#include <objc/message.h>
 #include <optional>
 #include <variant>
 #include <unordered_map>
 #include <vector>
+
+// objc_retain/objc_release are part of the stable ObjC ABI (macOS 10.12+)
+// but not declared in public headers. We use them for manual reference counting
+// since ARC is not enabled for .mm files in this project.
+extern "C" id objc_retain(id value);
+extern "C" void objc_release(id value);
 
 #ifdef __OBJC__
 @class NSMethodSignature;
@@ -51,6 +58,14 @@ public:
       // This better be an Napi::External<id>! We lost the type info at runtime.
       Napi::External<id> external = info[0].As<Napi::External<id>>();
       objcObject = *(external.Data());
+      // Retain the ObjC object so it stays alive as long as this JS wrapper
+      // exists. Without this, ARC/autorelease can deallocate the object while
+      // JS still holds a reference, causing Use-After-Free crashes (SIGTRAP)
+      // in completion handler callbacks and other async contexts.
+      // Note: ARC is not enabled for .mm files in this project (the -fobjc-arc
+      // flag is in OTHER_CFLAGS, not OTHER_CPLUSPLUSFLAGS), so __strong has
+      // no effect — we must manage retain/release manually.
+      if (objcObject) objc_retain(objcObject);
       return;
     }
     // If someone tries `new ObjcObject()` from JS, forbid it:
@@ -58,7 +73,12 @@ public:
         .ThrowAsJavaScriptException();
   }
   static Napi::Object NewInstance(Napi::Env env, id obj);
-  ~ObjcObject() = default;
+  ~ObjcObject() {
+    if (objcObject) {
+      objc_release(objcObject);
+      objcObject = nil;
+    }
+  }
 
 private:
   Napi::Value $MsgSend(const Napi::CallbackInfo &info);
