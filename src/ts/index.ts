@@ -142,6 +142,10 @@ class NobjcObject {
           // object (avoids triggering proxy 'has' trap which would be a second FFI call)
           const selector = NobjcMethodNameToObjcSelector(methodName);
           if (!target.$respondsToSelector(selector)) {
+            // special case since JS checks for `.then` on Promise objects
+            if (methodName === "then") return undefined;
+
+            // Otherwise, throw an error
             throw new Error(`Method ${methodName} not found on object`);
           }
           method = NobjcMethod(object, methodName);
