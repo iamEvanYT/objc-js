@@ -78,6 +78,8 @@ class NobjcObject {
       has(target, p: string | symbol) {
         // Return true for the special Symbol to enable unwrapping
         if (p === NATIVE_OBJC_OBJECT) return true;
+        // Return true for inspect symbols so console.log uses custom inspect
+        if (p === customInspectSymbol) return true;
         // guard against other symbols
         if (typeof p === "symbol") return Reflect.has(target, p);
         // toString is always present
@@ -157,6 +159,10 @@ class NobjcObject {
 
     // Create the proxy
     const proxy = new Proxy<NobjcNative.ObjcObject>(object, handler) as unknown as NobjcObject;
+
+    // Set custom inspect on the native object so console.log works through the Proxy.
+    // Runtimes (Node, Bun) bypass Proxy traps during inspect and read the target directly.
+    (object as any)[customInspectSymbol] = () => proxy.toString();
 
     // Store proxy → native mapping in WeakMap for O(1) unwrap (bypasses Proxy traps)
     nativeObjectMap.set(proxy as unknown as object, object);
