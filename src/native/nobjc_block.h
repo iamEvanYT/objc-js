@@ -37,7 +37,9 @@
 #include "type-conversion.h"
 #include "struct-utils.h"
 #include "ffi-utils.h"
+#include <Block.h>
 #include <Foundation/Foundation.h>
+#include <atomic>
 #include <ffi.h>
 #include <napi.h>
 #include <objc/runtime.h>
@@ -51,10 +53,14 @@
 
 // MARK: - Block ABI Structures
 
-// Block ABI descriptor (minimum viable — no copy/dispose helpers)
+struct BlockInfo;
+
+// Block ABI descriptor with copy/dispose helpers for BlockInfo lifetime.
 struct NobjcBlockDescriptor {
   unsigned long reserved;  // Always 0
   unsigned long size;      // sizeof(NobjcBlockLiteral)
+  void (*copy_helper)(void *dst, const void *src);
+  void (*dispose_helper)(const void *src);
 };
 
 // Block ABI literal struct
@@ -65,6 +71,7 @@ struct NobjcBlockLiteral {
   int reserved;            // Always 0
   void *invoke;            // Function pointer (FFI closure)
   NobjcBlockDescriptor *descriptor;
+  BlockInfo *blockInfo;    // Captured state retained/released by the block runtime
 };
 
 // _NSConcreteStackBlock is declared in <Block.h> (included via Foundation)
@@ -254,7 +261,7 @@ inline std::string GetExtendedBlockEncoding(Class cls, SEL selector, size_t argI
  * BlockInfo holds all state for a single JS-function-backed block.
  * It owns the FFI closure, CIF, arg types, JS function reference, and TSFN.
  *
- * Stored in a global registry for lifetime management (never freed in v1).
+ * Lifetime is tied to the Objective-C block copies plus any in-flight callbacks.
  */
 struct BlockInfo {
   // FFI closure and CIF
@@ -290,8 +297,14 @@ struct BlockInfo {
 
   // The heap-copied block (after _Block_copy)
   // Stored as void* since ARC is not enabled for .mm files in this project.
-  // The block is never freed in v1 (stored in global registry).
   void *heapBlock;
+
+  // One ref for the initially created block copy, plus one for each additional
+  // Objective-C block copy, plus one for each in-flight invocation.
+  std::atomic<size_t> refCount{1};
+
+  // Ensures we only release the TSFN's initial ref once.
+  std::atomic<bool> cleanupScheduled{false};
 
   ~BlockInfo() {
     // Free the FFI closure
@@ -299,8 +312,7 @@ struct BlockInfo {
       ffi_closure_free(closure);
       closure = nullptr;
     }
-    // Note: tsfn and jsFunction cleanup is tricky across threads.
-    // In v1, BlockInfo is never destroyed, so this is moot.
+    jsFunction.Reset();
   }
 };
 
@@ -321,15 +333,59 @@ struct BlockCallData {
   bool isComplete;
 };
 
-// MARK: - Global Block Registry
+// MARK: - Block Lifetime Management
 
-/**
- * Global registry of all created blocks.
- * Blocks are never freed in v1 — this prevents crashes from async callbacks
- * referencing freed memory.
- */
-static std::vector<std::unique_ptr<BlockInfo>> g_blockRegistry;
-static std::mutex g_blockRegistryMutex;
+constexpr int NOBJC_BLOCK_HAS_COPY_DISPOSE = (1 << 25);
+
+inline void RetainBlockInfo(BlockInfo *info) {
+  if (!info) return;
+  info->refCount.fetch_add(1, std::memory_order_relaxed);
+}
+
+inline void BlockTSFNFinalize(Napi::Env /*env*/, BlockInfo *info,
+                               BlockInfo * /*data*/) {
+  delete info;
+}
+
+inline void ScheduleBlockInfoCleanup(BlockInfo *info) {
+  if (!info) return;
+
+  bool expected = false;
+  if (!info->cleanupScheduled.compare_exchange_strong(
+          expected, true, std::memory_order_acq_rel)) {
+    return;
+  }
+
+  napi_status status = info->tsfn.Release();
+  if (status != napi_ok) {
+    NOBJC_ERROR("ScheduleBlockInfoCleanup: TSFN release failed (status=%d)", status);
+  }
+}
+
+inline void ReleaseBlockInfo(BlockInfo *info) {
+  if (!info) return;
+
+  size_t previous = info->refCount.fetch_sub(1, std::memory_order_acq_rel);
+  if (previous == 0) {
+    NOBJC_ERROR("ReleaseBlockInfo: refcount underflow");
+    return;
+  }
+  if (previous == 1) {
+    ScheduleBlockInfoCleanup(info);
+  }
+}
+
+inline void NobjcBlockCopyHelper(void *dst, const void *src) {
+  auto *dstBlock = static_cast<NobjcBlockLiteral *>(dst);
+  auto *srcBlock = static_cast<const NobjcBlockLiteral *>(src);
+  dstBlock->blockInfo = srcBlock->blockInfo;
+  RetainBlockInfo(dstBlock->blockInfo);
+}
+
+inline void NobjcBlockDisposeHelper(const void *src) {
+  auto *block = static_cast<const NobjcBlockLiteral *>(src);
+  ReleaseBlockInfo(block->blockInfo);
+}
 
 // MARK: - Block Argument Conversion (ObjC → JS)
 
@@ -547,6 +603,8 @@ inline void BlockTSFNCallback(Napi::Env env, Napi::Function /*jsCallback*/,
     callData->isComplete = true;
     callData->completionCv.notify_one();
   }
+
+  ReleaseBlockInfo(info);
 }
 
 // MARK: - FFI Closure Callback (Block Invoke)
@@ -568,6 +626,7 @@ inline void BlockInvokeCallback(ffi_cif *cif, void *ret, void **args,
     return;
   }
 
+  RetainBlockInfo(info);
   bool is_js_thread = pthread_equal(pthread_self(), info->js_thread);
 
   if (is_js_thread) {
@@ -603,6 +662,7 @@ inline void BlockInvokeCallback(ffi_cif *cif, void *ret, void **args,
         NOBJC_ERROR("BlockInvokeCallback: unknown exception");
       }
     }
+    ReleaseBlockInfo(info);
   } else {
     // Cross-thread call via TSFN
     BlockCallData callData;
@@ -621,6 +681,7 @@ inline void BlockInvokeCallback(ffi_cif *cif, void *ret, void **args,
     napi_status acq_status = info->tsfn.Acquire();
     if (acq_status != napi_ok) {
       NOBJC_ERROR("BlockInvokeCallback: Failed to acquire TSFN");
+      ReleaseBlockInfo(info);
       return;
     }
 
@@ -630,6 +691,7 @@ inline void BlockInvokeCallback(ffi_cif *cif, void *ret, void **args,
 
     if (status != napi_ok) {
       NOBJC_ERROR("BlockInvokeCallback: TSFN call failed (status=%d)", status);
+      ReleaseBlockInfo(info);
       return;
     }
 
@@ -677,7 +739,7 @@ inline id CreateBlockFromJSFunction(Napi::Env env,
   }
 
   // Create BlockInfo
-  auto blockInfo = std::make_unique<BlockInfo>();
+  auto *blockInfo = new BlockInfo();
   blockInfo->signature = sig;
   blockInfo->env = env;
   blockInfo->js_thread = pthread_self();
@@ -688,8 +750,15 @@ inline id CreateBlockFromJSFunction(Napi::Env env,
   blockInfo->jsFunction = Napi::Persistent(jsFunction.As<Napi::Function>());
 
   // Create TSFN for cross-thread calls
-  blockInfo->tsfn = CreateMethodTSFN(env, jsFunction.As<Napi::Function>(),
-                                     "nobjc_block_tsfn");
+  blockInfo->tsfn = Napi::ThreadSafeFunction::New(
+      env,
+      jsFunction.As<Napi::Function>(),
+      "nobjc_block_tsfn",
+      0,
+      1,
+      blockInfo,
+      BlockTSFNFinalize,
+      blockInfo);
 
   // Build FFI types for the block invocation
   // Block invoke signature: returnType (blockSelf, param1, param2, ...)
@@ -731,6 +800,7 @@ inline id CreateBlockFromJSFunction(Napi::Env env,
   if (!blockInfo->closure || !codePtr) {
     Napi::Error::New(env, "Failed to allocate FFI closure for block")
         .ThrowAsJavaScriptException();
+    ReleaseBlockInfo(blockInfo);
     return nil;
   }
 
@@ -743,10 +813,9 @@ inline id CreateBlockFromJSFunction(Napi::Env env,
       blockInfo->argFFIPtrs.data());
 
   if (ffiStatus != FFI_OK) {
-    ffi_closure_free(blockInfo->closure);
-    blockInfo->closure = nullptr;
     Napi::Error::New(env, "ffi_prep_cif failed for block")
         .ThrowAsJavaScriptException();
+    ReleaseBlockInfo(blockInfo);
     return nil;
   }
 
@@ -755,32 +824,35 @@ inline id CreateBlockFromJSFunction(Napi::Env env,
       blockInfo->closure,
       &blockInfo->cif,
       BlockInvokeCallback,
-      blockInfo.get(),  // userdata = BlockInfo*
+      blockInfo,  // userdata = BlockInfo*
       codePtr);
 
   if (ffiStatus != FFI_OK) {
-    ffi_closure_free(blockInfo->closure);
-    blockInfo->closure = nullptr;
     Napi::Error::New(env, "ffi_prep_closure_loc failed for block")
         .ThrowAsJavaScriptException();
+    ReleaseBlockInfo(blockInfo);
     return nil;
   }
 
   // Build the block literal (stack block)
   blockInfo->descriptor.reserved = 0;
   blockInfo->descriptor.size = sizeof(NobjcBlockLiteral);
+  blockInfo->descriptor.copy_helper = NobjcBlockCopyHelper;
+  blockInfo->descriptor.dispose_helper = NobjcBlockDisposeHelper;
 
   blockInfo->blockLiteral.isa = _NSConcreteStackBlock;
-  blockInfo->blockLiteral.flags = 0;  // No flags — we don't provide copy/dispose helpers or a signature field in the descriptor
+  blockInfo->blockLiteral.flags = NOBJC_BLOCK_HAS_COPY_DISPOSE;
   blockInfo->blockLiteral.reserved = 0;
   blockInfo->blockLiteral.invoke = codePtr;
   blockInfo->blockLiteral.descriptor = &blockInfo->descriptor;
+  blockInfo->blockLiteral.blockInfo = blockInfo;
 
   // Copy to heap via _Block_copy
   void *heapBlockPtr = _Block_copy(&blockInfo->blockLiteral);
   if (!heapBlockPtr) {
     Napi::Error::New(env, "_Block_copy failed")
         .ThrowAsJavaScriptException();
+    ReleaseBlockInfo(blockInfo);
     return nil;
   }
 
@@ -788,12 +860,7 @@ inline id CreateBlockFromJSFunction(Napi::Env env,
   blockInfo->heapBlock = heapBlockPtr;
 
   id result = (id)blockInfo->heapBlock;
-
-  // Store in global registry (never freed in v1)
-  {
-    std::lock_guard<std::mutex> lock(g_blockRegistryMutex);
-    g_blockRegistry.push_back(std::move(blockInfo));
-  }
+  ReleaseBlockInfo(blockInfo);
 
   NOBJC_LOG("CreateBlockFromJSFunction: created block %p", result);
   return result;

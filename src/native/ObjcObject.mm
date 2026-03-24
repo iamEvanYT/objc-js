@@ -442,10 +442,19 @@ Napi::Value ObjcObject::$MsgSend(const Napi::CallbackInfo &info) {
   constexpr size_t kSmallArgCount = 4;
   ObjcType smallArgBuf[kSmallArgCount];
   std::vector<ObjcType> heapArgBuf;
+  std::vector<id> createdBlocks;
   const bool useHeap = expectedArgCount > kSmallArgCount;
   if (useHeap) {
     heapArgBuf.reserve(expectedArgCount);
   }
+  createdBlocks.reserve(expectedArgCount);
+  [[maybe_unused]] auto releaseCreatedBlocks = MakeScopeGuard([&createdBlocks] {
+    for (id block : createdBlocks) {
+      if (block != nil) {
+        _Block_release(block);
+      }
+    }
+  });
 
   // Store struct argument buffers to keep them alive until after invoke.
   std::vector<std::vector<uint8_t>> structBuffers;
@@ -492,6 +501,7 @@ Napi::Value ObjcObject::$MsgSend(const Napi::CallbackInfo &info) {
       id block = CreateBlockFromJSFunction(env, info[i], blockEncoding);
       if (env.IsExceptionPending()) return env.Null();
       [invocation setArgument:&block atIndex:i + 1];
+      createdBlocks.push_back(block);
       // Store block as id in arg buffer to keep it alive until after invoke
       if (useHeap) {
         heapArgBuf.push_back(BaseObjcType{block});
@@ -735,10 +745,19 @@ Napi::Value ObjcObject::$MsgSendPrepared(const Napi::CallbackInfo &info) {
   constexpr size_t kSmallArgCount = 4;
   ObjcType smallArgBuf[kSmallArgCount];
   std::vector<ObjcType> heapArgBuf;
+  std::vector<id> createdBlocks;
   const bool useHeap = prepared->expectedArgCount > kSmallArgCount;
   if (useHeap) {
     heapArgBuf.reserve(prepared->expectedArgCount);
   }
+  createdBlocks.reserve(prepared->expectedArgCount);
+  [[maybe_unused]] auto releaseCreatedBlocks = MakeScopeGuard([&createdBlocks] {
+    for (id block : createdBlocks) {
+      if (block != nil) {
+        _Block_release(block);
+      }
+    }
+  });
 
   std::vector<std::vector<uint8_t>> structBuffers;
 
@@ -779,6 +798,7 @@ Napi::Value ObjcObject::$MsgSendPrepared(const Napi::CallbackInfo &info) {
       id block = CreateBlockFromJSFunction(env, info[jsArgIdx], blockEncoding);
       if (env.IsExceptionPending()) return env.Null();
       [invocation setArgument:&block atIndex:i + 2];
+      createdBlocks.push_back(block);
       if (useHeap) {
         heapArgBuf.push_back(BaseObjcType{block});
       } else {
