@@ -10,10 +10,10 @@ Objective-C blocks are used extensively in Apple's APIs for callbacks, enumerati
 
 - **Automatic Conversion**: JavaScript functions are automatically converted to blocks when passed to a method expecting a block parameter
 - **No API Changes**: No new functions or classes -- just pass functions where blocks are expected
-- **Heuristic Type Detection**: Block parameter types are inferred at runtime using pointer analysis
+- **Runtime Signature Detection**: The bridge uses extended block type encodings when the Objective-C runtime exposes them, and falls back to heuristics when it does not
 - **Synchronous Blocks**: Fully supported for enumeration, sorting, filtering, etc.
 - **Async Blocks**: Supported for completion handlers called from background threads
-- **Memory Safety**: Block references are kept alive for async callbacks
+- **Managed Lifetime**: Block wrappers stay alive while Objective-C retains them and are released when the last block copy and in-flight callback are gone
 
 ## Basic Usage
 
@@ -68,12 +68,13 @@ When you call a method and pass a JavaScript function as an argument:
 
 1. The bridge checks the method's type encoding for the `@?` block type
 2. A native Objective-C block is created that wraps your JavaScript function
-3. The block is passed to the method as a normal argument
-4. When Objective-C invokes the block, your JavaScript function is called with the arguments converted to JS values
+3. The block is heap-copied and passed to Objective-C as a normal argument
+4. The bridge releases its temporary block reference after the method call, while any copies retained by Objective-C keep the block alive
+5. When Objective-C invokes the block, your JavaScript function is called with the arguments converted to JS values
 
 ### Parameter Type Detection
 
-Since extended block type encodings are not available at runtime, the bridge uses heuristic detection to determine what each block argument is:
+When the Objective-C runtime preserves extended block type encodings (for example `@?<v@?q>`), objc-js uses them to convert arguments precisely. If that metadata is unavailable, the bridge falls back to heuristic detection:
 
 - **Objective-C objects** (NSString, NSNumber, etc.) are detected via heap pointer analysis and wrapped as `NobjcObject` instances -- you can call methods on them directly
 - **Integers** (NSUInteger, NSInteger, etc.) are passed as JavaScript numbers
@@ -81,7 +82,7 @@ Since extended block type encodings are not available at runtime, the bridge use
 
 ### Function Arity
 
-The number of parameters your JavaScript function declares (its `.length`) determines how many block arguments are passed. Make sure your function signature matches the expected block signature:
+When extended block type metadata is missing, objc-js falls back to your JavaScript function's `.length` to infer how many arguments the block expects. In practice, you should still declare the parameters the Objective-C API expects:
 
 ```typescript
 // enumerateObjectsUsingBlock: expects (id obj, NSUInteger idx, BOOL *stop)
@@ -105,7 +106,7 @@ Block return values are converted back to Objective-C types when the block has a
 
 ## Async Blocks (Completion Handlers)
 
-Blocks passed as completion handlers to async APIs work automatically, but the callback will only be delivered if the macOS CFRunLoop is being pumped. Node.js and Bun don't pump the CFRunLoop on their own, so you need to use `RunLoop.run()` to enable delivery.
+Blocks passed as completion handlers to async APIs work automatically. If the callback arrives on a background thread, objc-js marshals it back to JavaScript with a thread-safe function. The callback will only be delivered if the macOS CFRunLoop is being pumped. Node.js and Bun don't pump the CFRunLoop on their own, so you need to use `RunLoop.run()` to enable delivery.
 
 ### Example: NSColorSampler
 
@@ -147,8 +148,8 @@ See the [Run Loop guide](./run-loop.md) for full details on `RunLoop.run()`, `Ru
 ## Limitations
 
 1. **No `stop` pointer support**: The `BOOL *stop` parameter in enumeration blocks is passed as a raw number. Setting `*stop = YES` to stop enumeration early is not currently supported from JavaScript.
-2. **Heuristic type detection**: Without extended block type encodings at runtime, the bridge uses heuristics to determine argument types. In rare cases, a large integer could be misidentified as an object pointer.
-3. **Memory**: Block wrappers are currently not freed (they persist for the lifetime of the process). This is acceptable for typical usage patterns but could be a concern if creating millions of blocks.
+2. **Heuristic fallback**: Some APIs do not expose extended block type encodings at runtime. In those cases objc-js uses heuristics, and in rare cases a large integer could be misidentified as an object pointer.
+3. **RunLoop requirements still apply**: Async callbacks that are delivered via the main run loop or main queue still require `RunLoop.run()` or manual `RunLoop.pump()` calls.
 
 ## See Also
 
