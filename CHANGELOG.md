@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.4.0] - 2026-03-24
+
+- feat: add RunLoop APIs
+- feat: cleanup blocks when finished
+
 ## [1.3.1] - 2026-02-22
 
 - fix: custom inspect symbol not being set on native objects
