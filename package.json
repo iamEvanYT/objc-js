@@ -47,7 +47,7 @@
     "prebuild:x64": "prebuildify --napi --strip --arch x64 -r node",
     "prebuild:all": "bun run prebuild:arm64 && bun run prebuild:x64"
   },
-  "version": "1.4.0",
+  "version": "1.5.0",
   "description": "Objective-C bridge for Node.js",
   "main": "dist/index.js",
   "dependencies": {
