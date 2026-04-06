@@ -530,7 +530,7 @@ inline void SetBlockReturnFromJS(Napi::Value result, void *returnPtr,
       id objcVal = nil;
       if (result.IsObject()) {
         Napi::Object obj = result.As<Napi::Object>();
-        if (obj.InstanceOf(ObjcObject::constructor.Value())) {
+        if (ObjcObject::IsInstance(result.Env(), obj)) {
           ObjcObject *wrapper = Napi::ObjectWrap<ObjcObject>::Unwrap(obj);
           objcVal = wrapper->objcObject;
         }

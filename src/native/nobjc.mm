@@ -43,7 +43,7 @@ Napi::Value GetPointer(const Napi::CallbackInfo &info) {
   }
   
   Napi::Object obj = info[0].As<Napi::Object>();
-  if (!obj.InstanceOf(ObjcObject::constructor.Value())) {
+  if (!ObjcObject::IsInstance(env, obj)) {
     throw Napi::TypeError::New(env, "Argument must be an ObjcObject instance");
   }
   
@@ -103,7 +103,12 @@ Napi::Value PumpRunLoop(const Napi::CallbackInfo &info) {
   }
 }
 
+static void CleanupEnvData(napi_env, void *data, void *) {
+  delete static_cast<NobjcEnvData *>(data);
+}
+
 Napi::Object InitAll(Napi::Env env, Napi::Object exports) {
+  napi_set_instance_data(env, new NobjcEnvData(), CleanupEnvData, nullptr);
   ObjcObject::Init(env, exports);
   exports.Set("LoadLibrary", Napi::Function::New(env, LoadLibrary));
   exports.Set("GetClassObject", Napi::Function::New(env, GetClassObject));

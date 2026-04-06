@@ -279,7 +279,7 @@ Napi::Value DefineClass(const Napi::CallbackInfo &info) {
     }
   } else if (superValue.IsObject()) {
     Napi::Object superObj = superValue.As<Napi::Object>();
-    if (superObj.InstanceOf(ObjcObject::constructor.Value())) {
+    if (ObjcObject::IsInstance(env, superObj)) {
       ObjcObject *objcObj = Napi::ObjectWrap<ObjcObject>::Unwrap(superObj);
       superClass = (Class)objcObj->objcObject;
     }
@@ -627,7 +627,7 @@ Napi::Value CallSuper(const Napi::CallbackInfo &info) {
     throw Napi::TypeError::New(env, "First argument must be an ObjcObject (self)");
   }
   Napi::Object selfObj = info[0].As<Napi::Object>();
-  if (!selfObj.InstanceOf(ObjcObject::constructor.Value())) {
+  if (!ObjcObject::IsInstance(env, selfObj)) {
     throw Napi::TypeError::New(env, "First argument must be an ObjcObject (self)");
   }
   ObjcObject *selfWrapper = Napi::ObjectWrap<ObjcObject>::Unwrap(selfObj);

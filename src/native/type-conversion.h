@@ -583,7 +583,7 @@ inline void SetInvocationReturnFromJS(NSInvocation *invocation,
   case '@': {
     if (result.IsObject()) {
       Napi::Object resultObj = result.As<Napi::Object>();
-      if (resultObj.InstanceOf(ObjcObject::constructor.Value())) {
+      if (ObjcObject::IsInstance(result.Env(), resultObj)) {
         ObjcObject *objcObj = Napi::ObjectWrap<ObjcObject>::Unwrap(resultObj);
         id objcValue = objcObj->objcObject;
         [invocation setReturnValue:&objcValue];

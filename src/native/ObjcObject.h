@@ -47,11 +47,17 @@ struct PreparedSend {
   std::vector<ArgInfo> argInfos;
 };
 
+struct NobjcEnvData {
+  Napi::FunctionReference objcObjectConstructor;
+};
+
 class ObjcObject : public Napi::ObjectWrap<ObjcObject> {
 public:
   __strong id objcObject;
-  static Napi::FunctionReference constructor;
   static void Init(Napi::Env env, Napi::Object exports);
+  static NobjcEnvData *GetEnvData(Napi::Env env);
+  static Napi::FunctionReference &GetConstructorRef(Napi::Env env);
+  static bool IsInstance(Napi::Env env, const Napi::Value &value);
   ObjcObject(const Napi::CallbackInfo &info)
       : Napi::ObjectWrap<ObjcObject>(info), objcObject(nil) {
     if (info.Length() == 1 && info[0].IsExternal()) {

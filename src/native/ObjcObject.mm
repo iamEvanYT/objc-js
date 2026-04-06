@@ -311,7 +311,24 @@ struct ClassSELHash {
 static std::unordered_map<std::pair<Class, SEL>, NSMethodSignature *, ClassSELHash>
     methodSignatureCache;
 
-Napi::FunctionReference ObjcObject::constructor;
+NobjcEnvData *ObjcObject::GetEnvData(Napi::Env env) {
+  NobjcEnvData *data = env.GetInstanceData<NobjcEnvData>();
+  if (data == nullptr) {
+    throw Napi::Error::New(env, "objc-js addon state is not initialized");
+  }
+  return data;
+}
+
+Napi::FunctionReference &ObjcObject::GetConstructorRef(Napi::Env env) {
+  return GetEnvData(env)->objcObjectConstructor;
+}
+
+bool ObjcObject::IsInstance(Napi::Env env, const Napi::Value &value) {
+  if (!value.IsObject()) {
+    return false;
+  }
+  return value.As<Napi::Object>().InstanceOf(GetConstructorRef(env).Value());
+}
 
 void ObjcObject::Init(Napi::Env env, Napi::Object exports) {
   Napi::Function func =
@@ -323,8 +340,7 @@ void ObjcObject::Init(Napi::Env env, Napi::Object exports) {
                       InstanceMethod("$msgSendPrepared", &ObjcObject::$MsgSendPrepared),
                       InstanceMethod("$getPointer", &ObjcObject::GetPointer),
                   });
-  constructor = Napi::Persistent(func);
-  constructor.SuppressDestruct();
+  GetConstructorRef(env) = Napi::Persistent(func);
   exports.Set("ObjcObject", func);
 }
 
@@ -332,7 +348,8 @@ Napi::Object ObjcObject::NewInstance(Napi::Env env, id obj) {
   Napi::EscapableHandleScope scope(env);
   // `obj` is already a pointer, technically, but the Napi::External
   //  API expects a pointer, so we have to pointer to the pointer.
-  Napi::Object jsObj = constructor.New({Napi::External<id>::New(env, &obj)});
+  Napi::Object jsObj =
+      GetConstructorRef(env).New({Napi::External<id>::New(env, &obj)});
   return scope.Escape(jsObj).ToObject();
 }
 

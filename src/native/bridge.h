@@ -181,7 +181,7 @@ T ConvertToNativeValue(const Napi::Value &value,
     // is value an ObjcObject instance?
     if (value.IsObject()) {
       Napi::Object obj = value.As<Napi::Object>();
-      if (obj.InstanceOf(ObjcObject::constructor.Value())) {
+      if (ObjcObject::IsInstance(value.Env(), obj)) {
         ObjcObject *objcObj = Napi::ObjectWrap<ObjcObject>::Unwrap(obj);
         return objcObj->objcObject;
       }
