@@ -1,5 +1,5 @@
 import { test, expect, describe } from "./test-utils.js";
-import { NobjcLibrary, NobjcObject } from "../dist/index.js";
+import { NobjcLibrary, NobjcObject, typedBlock } from "../dist/index.js";
 import { isProxy } from "node:util/types";
 
 /**
@@ -49,6 +49,10 @@ interface _NSArray extends NobjcObject {
   enumerateObjectsUsingBlock$(block: (obj: NobjcObject, idx: number, stop: any) => void): void;
 }
 
+interface _NSArrayConstructor {
+  array(): _NSArray;
+}
+
 interface _NSMutableArray extends _NSArray {
   addObject$(obj: NobjcObject): void;
 }
@@ -85,6 +89,7 @@ interface _NSURLSessionDataTask extends NobjcObject {
 describe("Object Lifecycle Tests", () => {
   const Foundation = new NobjcLibrary("/System/Library/Frameworks/Foundation.framework/Foundation");
 
+  const NSArray = Foundation.NSArray as unknown as _NSArrayConstructor;
   const NSString = Foundation.NSString as unknown as _NSStringConstructor;
   const NSNumber = Foundation.NSNumber as unknown as _NSNumberConstructor;
   const NSMutableArray = Foundation.NSMutableArray as unknown as _NSMutableArrayConstructor;
@@ -182,6 +187,38 @@ describe("Object Lifecycle Tests", () => {
     const upper = stored.uppercaseString();
     const sub = upper.substringToIndex$(5);
     expect(sub.UTF8String()).toBe("CHAIN");
+  });
+
+  test("block callback args should wrap image-backed singleton objects", () => {
+    const outer = NSMutableArray.array();
+    outer.addObject$(NSArray.array());
+
+    let receivedObj: any = null;
+
+    (outer as _NSArray).enumerateObjectsUsingBlock$((obj: any, _idx: number, _stop: any) => {
+      receivedObj = obj;
+    });
+
+    expect(receivedObj).not.toBeNull();
+    expect(isProxy(receivedObj)).toBe(true);
+    expect(receivedObj.count()).toBe(0);
+  });
+
+  test("typedBlock should bypass heuristic fallback for image-backed singleton objects", () => {
+    const outer = NSMutableArray.array();
+    outer.addObject$(NSArray.array());
+
+    let receivedObj: any = null;
+
+    (outer as _NSArray).enumerateObjectsUsingBlock$(
+      typedBlock({ returns: "v", args: ["@", "Q", "^B"] }, (obj: any, _idx: number, _stop: any) => {
+        receivedObj = obj;
+      })
+    );
+
+    expect(receivedObj).not.toBeNull();
+    expect(isProxy(receivedObj)).toBe(true);
+    expect(receivedObj.count()).toBe(0);
   });
 
   // -- Async completion handler (TSFN path) --

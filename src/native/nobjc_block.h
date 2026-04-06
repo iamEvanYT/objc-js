@@ -40,6 +40,7 @@
 #include <Block.h>
 #include <Foundation/Foundation.h>
 #include <atomic>
+#include <dlfcn.h>
 #include <ffi.h>
 #include <napi.h>
 #include <objc/runtime.h>
@@ -316,6 +317,8 @@ struct BlockInfo {
   }
 };
 
+constexpr const char *kTypedBlockEncodingProperty = "__nobjcBlockTypeEncoding";
+
 // MARK: - Block Call Data (transient, for cross-thread invocation)
 
 /**
@@ -400,7 +403,64 @@ inline void NobjcBlockDisposeHelper(const void *src) {
  * 1. Tagged pointers (arm64: high bit set) are always valid objects
  * 2. Use malloc_zone_from_ptr() to check if it's a heap allocation
  * 3. If it is, verify it has a valid class pointer
+ * 4. Fall back to image-backed singleton detection for constant objects like
+ *    __NSArray0 that live in the dyld shared cache instead of malloc heap
  */
+inline bool PointerResolvesToLoadedImage(const void *ptr) {
+  if (!ptr) return false;
+  Dl_info info;
+  return dladdr(ptr, &info) != 0;
+}
+
+inline uintptr_t GetObjCIsaClassMask() {
+  static uintptr_t mask = []() -> uintptr_t {
+    void *symbol = dlsym(RTLD_DEFAULT, "objc_debug_isa_class_mask");
+    if (symbol) {
+      return *static_cast<const uintptr_t *>(symbol);
+    }
+
+#if defined(__aarch64__) || defined(__arm64__)
+    return 0x0000000ffffffff8ULL;
+#elif defined(__x86_64__)
+    return 0x00007ffffffffff8ULL;
+#else
+    return 0;
+#endif
+  }();
+  return mask;
+}
+
+inline bool LooksLikeImageBackedObjCObject(uintptr_t val) {
+  void *ptr = reinterpret_cast<void *>(val);
+  if (!PointerResolvesToLoadedImage(ptr)) return false;
+
+  // Image-backed singleton objects (for example __NSArray0) are not malloc
+  // allocations, so inspect the isa word and see if it resolves to something
+  // that also looks like a class pointer in a loaded image.
+  uintptr_t isaBits = *reinterpret_cast<const uintptr_t *>(ptr);
+  if (isaBits < 4096) return false;
+
+  const uintptr_t isaMask = GetObjCIsaClassMask();
+  const uintptr_t isaCandidates[] = {
+      isaBits,
+      isaMask == 0 ? 0 : (isaBits & isaMask),
+  };
+
+  for (uintptr_t candidate : isaCandidates) {
+    if (candidate < 4096 || (candidate & (alignof(void *) - 1)) != 0) {
+      continue;
+    }
+
+    void *candidatePtr = reinterpret_cast<void *>(candidate);
+    if (malloc_zone_from_ptr(candidatePtr) ||
+        PointerResolvesToLoadedImage(candidatePtr)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 inline bool LooksLikeObjCObject(uintptr_t val) {
   if (val == 0) return false;  // nil
 
@@ -415,12 +475,14 @@ inline bool LooksLikeObjCObject(uintptr_t val) {
   // malloc_zone_from_ptr returns non-NULL only for valid heap allocations.
   void *ptr = (void *)val;
   malloc_zone_t *zone = malloc_zone_from_ptr(ptr);
-  if (!zone) return false;
+  if (zone) {
+    // It's a heap allocation — very likely an ObjC object.
+    // Do a final check: object_getClass should return a valid class.
+    Class cls = object_getClass((__bridge id)ptr);
+    if (cls != nil) return true;
+  }
 
-  // It's a heap allocation — very likely an ObjC object.
-  // Do a final check: object_getClass should return a valid class.
-  Class cls = object_getClass((__bridge id)ptr);
-  return cls != nil;
+  return LooksLikeImageBackedObjCObject(val);
 }
 
 /**
@@ -718,8 +780,22 @@ inline id CreateBlockFromJSFunction(Napi::Env env,
                                      const char *typeEncoding) {
   NOBJC_LOG("CreateBlockFromJSFunction: encoding='%s'", typeEncoding);
 
+  std::string explicitTypeEncoding;
+  if (jsFunction.IsFunction()) {
+    Napi::Value encodingValue =
+        jsFunction.As<Napi::Function>().Get(kTypedBlockEncodingProperty);
+    if (encodingValue.IsString()) {
+      explicitTypeEncoding = encodingValue.As<Napi::String>().Utf8Value();
+      NOBJC_LOG("CreateBlockFromJSFunction: using explicit encoding='%s'",
+                explicitTypeEncoding.c_str());
+    }
+  }
+
+  const char *effectiveTypeEncoding =
+      explicitTypeEncoding.empty() ? typeEncoding : explicitTypeEncoding.c_str();
+
   // Parse the block signature
-  BlockSignature sig = ParseBlockSignature(typeEncoding);
+  BlockSignature sig = ParseBlockSignature(effectiveTypeEncoding);
   if (!sig.valid) {
     // No extended encoding — infer from JS function's .length
     // All params are treated as pointer-sized (heuristic detection in callback)
@@ -728,7 +804,7 @@ inline id CreateBlockFromJSFunction(Napi::Env env,
 
     NOBJC_LOG("CreateBlockFromJSFunction: No extended block encoding, "
               "inferring %u params from JS function.length. Encoding: '%s'",
-              jsParamCount, typeEncoding);
+              jsParamCount, effectiveTypeEncoding);
 
     sig.returnType = "v";  // Assume void return
     sig.paramTypes.clear();

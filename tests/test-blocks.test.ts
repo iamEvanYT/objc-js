@@ -1,5 +1,5 @@
 import { test, expect, describe } from "./test-utils.js";
-import { NobjcLibrary, NobjcObject } from "../dist/index.js";
+import { NobjcLibrary, NobjcObject, typedBlock } from "../dist/index.js";
 
 // Type declarations for the Objective-C classes we're testing
 interface _NSString extends NobjcObject {
@@ -31,6 +31,7 @@ interface _NSArray extends NobjcObject {
 }
 
 interface _NSArrayConstructor {
+  array(): _NSArray;
   arrayWithObjects$count$(objects: any, count: number): _NSArray;
   arrayWithObject$(obj: NobjcObject): _NSArray;
 }
@@ -67,6 +68,7 @@ describe("Block Support Tests", () => {
 
   const NSString = foundation["NSString"] as unknown as _NSStringConstructor;
   const NSNumber = foundation["NSNumber"] as unknown as _NSNumberConstructor;
+  const NSArray = foundation["NSArray"] as unknown as _NSArrayConstructor;
   const NSMutableArray = foundation["NSMutableArray"] as unknown as _NSMutableArrayConstructor;
   const NSMutableDictionary = foundation["NSMutableDictionary"] as unknown as _NSMutableDictionaryConstructor;
 
@@ -150,5 +152,84 @@ describe("Block Support Tests", () => {
     });
 
     expect(receivedString).toBe("hello");
+  });
+
+  test("should support typedBlock object signatures for NSArray enumeration", () => {
+    const arr = NSMutableArray.array();
+    arr.addObject$(NSNumber.numberWithInt$(10));
+    arr.addObject$(NSNumber.numberWithInt$(20));
+
+    const collectedValues: number[] = [];
+    const collectedIndices: number[] = [];
+    const stopValues: any[] = [];
+
+    (arr as _NSArray).enumerateObjectsUsingBlock$(
+      typedBlock({ returns: "v", args: ["@", "Q", "^B"] }, (obj: any, idx: number, stop: any) => {
+        collectedValues.push(obj.intValue());
+        collectedIndices.push(idx);
+        stopValues.push(stop);
+      })
+    );
+
+    expect(collectedValues).toEqual([10, 20]);
+    expect(collectedIndices).toEqual([0, 1]);
+    expect(stopValues).toEqual([undefined, undefined]);
+  });
+
+  test("should support typedBlock full encoding strings for NSDictionary enumeration", () => {
+    const dict = NSMutableDictionary.dictionary();
+    dict.setObject$forKey$(NSNumber.numberWithInt$(1), NSString.stringWithUTF8String$("a"));
+    dict.setObject$forKey$(NSNumber.numberWithInt$(2), NSString.stringWithUTF8String$("b"));
+
+    const entries: Record<string, number> = {};
+    const stopValues: any[] = [];
+
+    (dict as _NSDictionary).enumerateKeysAndObjectsUsingBlock$(
+      typedBlock("@?<v@?@@^B>", (key: any, obj: any, stop: any) => {
+        entries[key.UTF8String()] = obj.intValue();
+        stopValues.push(stop);
+      })
+    );
+
+    expect(entries).toEqual({ a: 1, b: 2 });
+    expect(stopValues).toEqual([undefined, undefined]);
+  });
+
+  test("should use typedBlock to force object conversion for empty NSArray singletons", () => {
+    const outer = NSMutableArray.array();
+    outer.addObject$(NSArray.array());
+
+    let receivedCount = -1;
+
+    (outer as _NSArray).enumerateObjectsUsingBlock$(
+      typedBlock({ returns: "v", args: ["@", "Q", "^B"] }, (obj: any) => {
+        receivedCount = obj.count();
+      })
+    );
+
+    expect(receivedCount).toBe(0);
+  });
+
+  test("should return the same function from typedBlock", () => {
+    const fn = (_obj: any, _idx: number, _stop: any) => {};
+    expect(typedBlock({ returns: "v", args: ["@", "Q", "^B"] }, fn)).toBe(fn);
+  });
+
+  test("should reject invalid typedBlock string signatures", () => {
+    expect(() => typedBlock("v@:@", () => {})).toThrow(
+      "typedBlock(string, fn) expects a full block type encoding starting with '@?'"
+    );
+  });
+
+  test("should reject invalid typedBlock types signatures", () => {
+    expect(() =>
+      typedBlock(
+        {
+          types: "v@:@",
+          returns: "v"
+        },
+        () => {}
+      )
+    ).toThrow("typedBlock({ types }, fn) expects a full block type encoding starting with '@?'");
   });
 });

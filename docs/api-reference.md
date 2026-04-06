@@ -293,6 +293,36 @@ authController.setDelegate$(delegate);
 
 See [Protocol Implementation Documentation](./protocol-implementation.md) for more details and examples.
 
+## typedBlock()
+
+Attach an explicit Objective-C block signature to a JavaScript function.
+
+```typescript
+typedBlock(signature, fn)
+```
+
+**Parameters:**
+
+- `signature` (string | object): Either a full block type encoding like `@?<v@?@Q^B>` or an object with:
+  - `returns` (string): Return type encoding
+  - `args` (string[], optional): Argument type encodings, excluding the implicit block-self parameter
+  - `types` (string, optional): Full block type encoding; takes precedence over `returns`/`args`
+- `fn` (function): The JavaScript callback to annotate
+
+**Returns:** The same function object
+
+**Example:**
+
+```typescript
+import { typedBlock } from "objc-js";
+
+array.enumerateObjectsUsingBlock$(
+  typedBlock({ returns: "v", args: ["@", "Q", "^B"] }, (obj, idx, stop) => {
+    console.log(obj.toString(), idx, stop);
+  })
+);
+```
+
 ## getPointer()
 
 Get the raw native pointer for a NobjcObject as a Node Buffer. This is useful for passing Objective-C objects to native APIs that expect raw pointers, such as Electron's native window handles.

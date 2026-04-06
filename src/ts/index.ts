@@ -13,6 +13,7 @@ import { NobjcNative } from "./native.js";
 
 const customInspectSymbol = Symbol.for("nodejs.util.inspect.custom");
 const NATIVE_OBJC_OBJECT = Symbol("nativeObjcObject");
+const TYPED_BLOCK_ENCODING = "__nobjcBlockTypeEncoding";
 
 // WeakMap side-channel for O(1) proxy → native object lookup (bypasses Proxy traps)
 const nativeObjectMap = new WeakMap<object, NobjcNative.ObjcObject>();
@@ -172,6 +173,67 @@ class NobjcObject {
   }
 }
 
+export interface TypedBlockOptions {
+  /**
+   * Block return type encoding. Example: "v" (void), "@" (id), "B" (BOOL).
+   */
+  returns: string;
+
+  /**
+   * Block argument type encodings, excluding the implicit block-self (@?) parameter.
+   * Example: ["@", "Q", "^B"] for enumerateObjectsUsingBlock:.
+   */
+  args?: string[];
+
+  /**
+   * Full block type encoding. Example: "@?<v@?@Q^B>".
+   * When provided, this takes precedence over returns/args.
+   */
+  types?: string;
+}
+
+function normalizeTypedBlockEncoding(signature: string | TypedBlockOptions): string {
+  if (typeof signature === "string") {
+    if (!signature.startsWith("@?")) {
+      throw new TypeError("typedBlock(string, fn) expects a full block type encoding starting with '@?'");
+    }
+    return signature;
+  }
+
+  if (signature.types !== undefined) {
+    if (!signature.types.startsWith("@?")) {
+      throw new TypeError("typedBlock({ types }, fn) expects a full block type encoding starting with '@?'");
+    }
+    return signature.types;
+  }
+
+  const args = signature.args ?? [];
+  return `@?<${signature.returns}@?${args.join("")}>`;
+}
+
+/**
+ * Attach an explicit block signature to a JavaScript function.
+ *
+ * Use this when Objective-C only exposes `@?` for a block parameter and
+ * objc-js would otherwise have to guess the callback argument types.
+ *
+ * @example
+ * ```typescript
+ * const handler = typedBlock({ returns: "v", args: ["@", "Q", "^B"] }, (obj, idx, stop) => {
+ *   console.log(obj.toString(), idx, stop);
+ * });
+ * array.enumerateObjectsUsingBlock$(handler);
+ * ```
+ */
+function typedBlock<T extends (...args: any[]) => any>(signature: string | TypedBlockOptions, fn: T): T {
+  Object.defineProperty(fn, TYPED_BLOCK_ENCODING, {
+    value: normalizeTypedBlockEncoding(signature),
+    enumerable: false,
+    configurable: true
+  });
+  return fn;
+}
+
 function unwrapArg(arg: any): any {
   if (arg && typeof arg === "object") {
     return nativeObjectMap.get(arg) ?? arg;
@@ -185,6 +247,14 @@ function unwrapArg(arg: any): any {
       }
       return unwrapArg(arg(...nativeArgs));
     };
+    const explicitBlockEncoding = (arg as any)[TYPED_BLOCK_ENCODING];
+    if (typeof explicitBlockEncoding === "string") {
+      Object.defineProperty(wrapped, TYPED_BLOCK_ENCODING, {
+        value: explicitBlockEncoding,
+        enumerable: false,
+        configurable: true
+      });
+    }
     // Preserve the original function's .length so the native layer can read it
     // (used to infer block parameter count when extended encoding is unavailable)
     Object.defineProperty(wrapped, "length", { value: arg.length });
@@ -832,6 +902,7 @@ export {
   NobjcMethod,
   NobjcProtocol,
   NobjcClass,
+  typedBlock,
   RunLoop,
   getPointer,
   fromPointer,

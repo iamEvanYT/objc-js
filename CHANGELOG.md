@@ -1,5 +1,9 @@
 # Changelog
 
+## [1.5.0] - 2026-04-06
+
+- feat: add typedBlock API for explicit Objective-C block signatures
+
 ## [1.4.0] - 2026-03-24
 
 - feat: add RunLoop APIs

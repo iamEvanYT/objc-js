@@ -11,6 +11,7 @@ Objective-C blocks are used extensively in Apple's APIs for callbacks, enumerati
 - **Automatic Conversion**: JavaScript functions are automatically converted to blocks when passed to a method expecting a block parameter
 - **No API Changes**: No new functions or classes -- just pass functions where blocks are expected
 - **Runtime Signature Detection**: The bridge uses extended block type encodings when the Objective-C runtime exposes them, and falls back to heuristics when it does not
+- **Explicit Signatures**: `typedBlock()` lets you provide the exact block signature when runtime metadata is missing
 - **Synchronous Blocks**: Fully supported for enumeration, sorting, filtering, etc.
 - **Async Blocks**: Supported for completion handlers called from background threads
 - **Managed Lifetime**: Block wrappers stay alive while Objective-C retains them and are released when the last block copy and in-flight callback are gone
@@ -80,6 +81,34 @@ When the Objective-C runtime preserves extended block type encodings (for exampl
 - **Integers** (NSUInteger, NSInteger, etc.) are passed as JavaScript numbers
 - **Pointers** (like the `stop` parameter in enumeration blocks) are passed as numbers representing the pointer address
 
+### Explicit Signatures with `typedBlock()`
+
+When an API only exposes `@?` at runtime, heuristics may not be enough to recover the callback argument types. In those cases, wrap the callback with `typedBlock()` and provide the block signature explicitly:
+
+```typescript
+import { typedBlock } from "objc-js";
+
+arr.enumerateObjectsUsingBlock$(
+  typedBlock({ returns: "v", args: ["@", "Q", "^B"] }, (obj, idx, stop) => {
+    console.log(obj.toString(), idx, stop);
+  })
+);
+```
+
+You can also pass a full block encoding string directly:
+
+```typescript
+const handler = typedBlock("@?<v@?@Q^B>", (obj, idx, stop) => {
+  console.log(obj.toString(), idx, stop);
+});
+```
+
+The `args` array excludes the implicit block-self parameter (`@?`). In the example above:
+
+- `@` = object
+- `Q` = `NSUInteger`
+- `^B` = `BOOL *`
+
 ### Function Arity
 
 When extended block type metadata is missing, objc-js falls back to your JavaScript function's `.length` to infer how many arguments the block expects. In practice, you should still declare the parameters the Objective-C API expects:
@@ -148,7 +177,7 @@ See the [Run Loop guide](./run-loop.md) for full details on `RunLoop.run()`, `Ru
 ## Limitations
 
 1. **No `stop` pointer support**: The `BOOL *stop` parameter in enumeration blocks is passed as a raw number. Setting `*stop = YES` to stop enumeration early is not currently supported from JavaScript.
-2. **Heuristic fallback**: Some APIs do not expose extended block type encodings at runtime. In those cases objc-js uses heuristics, and in rare cases a large integer could be misidentified as an object pointer.
+2. **Heuristic fallback**: Some APIs do not expose extended block type encodings at runtime. In those cases objc-js uses heuristics unless you provide an explicit signature via `typedBlock()`.
 3. **RunLoop requirements still apply**: Async callbacks that are delivered via the main run loop or main queue still require `RunLoop.run()` or manual `RunLoop.pump()` calls.
 
 ## See Also
