@@ -215,6 +215,45 @@ describe("Block Support Tests", () => {
     expect(typedBlock({ returns: "v", args: ["@", "Q", "^B"] }, fn)).toBe(fn);
   });
 
+  test("should normalize typedBlock signatures when args are omitted", () => {
+    const fn = () => {};
+
+    typedBlock({ returns: "v" }, fn);
+
+    expect((fn as any).__nobjcBlockTypeEncoding).toBe("@?<v@?>");
+  });
+
+  test("should normalize typedBlock signatures when args are empty", () => {
+    const fn = () => {};
+
+    typedBlock({ returns: "@", args: [] }, fn);
+
+    expect((fn as any).__nobjcBlockTypeEncoding).toBe("@?<@@?>");
+  });
+
+  test("should preserve valid typedBlock string signatures", () => {
+    const fn = () => {};
+
+    typedBlock("@?<v@?@Q^B>", fn);
+
+    expect((fn as any).__nobjcBlockTypeEncoding).toBe("@?<v@?@Q^B>");
+  });
+
+  test("should prefer typedBlock types over returns and args", () => {
+    const fn = () => {};
+
+    typedBlock(
+      {
+        types: "@?<q@?@>",
+        returns: "v",
+        args: ["@", "Q", "^B"]
+      },
+      fn
+    );
+
+    expect((fn as any).__nobjcBlockTypeEncoding).toBe("@?<q@?@>");
+  });
+
   test("should reject invalid typedBlock string signatures", () => {
     expect(() => typedBlock("v@:@", () => {})).toThrow(
       "typedBlock(string, fn) expects a full block type encoding starting with '@?'"

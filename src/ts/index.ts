@@ -226,8 +226,9 @@ function normalizeTypedBlockEncoding(signature: string | TypedBlockOptions): str
  * ```
  */
 function typedBlock<T extends (...args: any[]) => any>(signature: string | TypedBlockOptions, fn: T): T {
+  const normalizedEncoding = normalizeTypedBlockEncoding(signature);
   Object.defineProperty(fn, TYPED_BLOCK_ENCODING, {
-    value: normalizeTypedBlockEncoding(signature),
+    value: normalizedEncoding,
     enumerable: false,
     configurable: true
   });
