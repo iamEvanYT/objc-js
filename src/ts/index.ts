@@ -360,6 +360,14 @@ function getPointer(obj: NobjcObject): Buffer {
   throw new TypeError("Argument must be a NobjcObject instance");
 }
 
+/** Release the native object retained by a NobjcObject wrapper. */
+function dispose(obj: NobjcObject): void {
+  const nativeObj = nativeObjectMap.get(obj as unknown as object);
+  if (!nativeObj) throw new TypeError("Argument must be a NobjcObject instance");
+  methodCache.delete(nativeObj);
+  nativeObj.$dispose();
+}
+
 /**
  * Create a NobjcObject from a raw native pointer.
  *
@@ -906,6 +914,7 @@ export {
   typedBlock,
   RunLoop,
   getPointer,
+  dispose,
   fromPointer,
   callFunction,
   callVariadicFunction

@@ -339,9 +339,28 @@ void ObjcObject::Init(Napi::Env env, Napi::Object exports) {
                       InstanceMethod("$prepareSend", &ObjcObject::$PrepareSend),
                       InstanceMethod("$msgSendPrepared", &ObjcObject::$MsgSendPrepared),
                       InstanceMethod("$getPointer", &ObjcObject::GetPointer),
+                      InstanceMethod("$dispose", &ObjcObject::$Dispose),
                   });
   GetConstructorRef(env) = Napi::Persistent(func);
   exports.Set("ObjcObject", func);
+}
+
+void ObjcObject::Dispose() {
+  id object = objcObject;
+  objcObject = nil;
+  if (object) objc_release(object);
+}
+
+bool ObjcObject::EnsureAlive(Napi::Env env) {
+  if (objcObject) return true;
+  Napi::Error::New(env, "Objective-C object has been disposed")
+      .ThrowAsJavaScriptException();
+  return false;
+}
+
+Napi::Value ObjcObject::$Dispose(const Napi::CallbackInfo &info) {
+  Dispose();
+  return info.Env().Undefined();
 }
 
 Napi::Object ObjcObject::NewInstance(Napi::Env env, id obj) {
@@ -355,6 +374,7 @@ Napi::Object ObjcObject::NewInstance(Napi::Env env, id obj) {
 
 Napi::Value ObjcObject::$MsgSend(const Napi::CallbackInfo &info) {
   Napi::Env env = info.Env();
+  if (!EnsureAlive(env)) return env.Undefined();
 
   if (info.Length() < 1 || !info[0].IsString()) {
     Napi::TypeError::New(env, "Expected at least one string argument")
@@ -570,6 +590,7 @@ Napi::Value ObjcObject::$MsgSend(const Napi::CallbackInfo &info) {
 }
 
 Napi::Value ObjcObject::GetPointer(const Napi::CallbackInfo &info) {
+  if (!EnsureAlive(info.Env())) return info.Env().Undefined();
   Napi::Env env = info.Env();
   return PointerToBuffer(env, objcObject);
 }
@@ -578,6 +599,7 @@ Napi::Value ObjcObject::GetPointer(const Napi::CallbackInfo &info) {
 
 Napi::Value ObjcObject::$RespondsToSelector(const Napi::CallbackInfo &info) {
   Napi::Env env = info.Env();
+  if (!EnsureAlive(env)) return env.Undefined();
 
   if (info.Length() < 1 || !info[0].IsString()) {
     Napi::TypeError::New(env, "$respondsToSelector requires a string argument")
@@ -616,6 +638,7 @@ Napi::Value ObjcObject::$RespondsToSelector(const Napi::CallbackInfo &info) {
  */
 Napi::Value ObjcObject::$PrepareSend(const Napi::CallbackInfo &info) {
   Napi::Env env = info.Env();
+  if (!EnsureAlive(env)) return env.Undefined();
 
   if (info.Length() < 1 || !info[0].IsString()) {
     Napi::TypeError::New(env, "$prepareSend requires a string argument")
@@ -717,6 +740,7 @@ Napi::Value ObjcObject::$PrepareSend(const Napi::CallbackInfo &info) {
  */
 Napi::Value ObjcObject::$MsgSendPrepared(const Napi::CallbackInfo &info) {
   Napi::Env env = info.Env();
+  if (!EnsureAlive(env)) return env.Undefined();
 
   if (info.Length() < 1 || !info[0].IsExternal()) {
     Napi::TypeError::New(env, "$msgSendPrepared requires a PreparedSend handle as first argument")
