@@ -79,12 +79,7 @@ public:
         .ThrowAsJavaScriptException();
   }
   static Napi::Object NewInstance(Napi::Env env, id obj);
-  ~ObjcObject() {
-    if (objcObject) {
-      objc_release(objcObject);
-      objcObject = nil;
-    }
-  }
+  ~ObjcObject() { Dispose(); }
 
 private:
   Napi::Value $MsgSend(const Napi::CallbackInfo &info);
@@ -92,6 +87,9 @@ private:
   Napi::Value $PrepareSend(const Napi::CallbackInfo &info);
   Napi::Value $MsgSendPrepared(const Napi::CallbackInfo &info);
   Napi::Value GetPointer(const Napi::CallbackInfo &info);
+  void Dispose();
+  bool EnsureAlive(Napi::Env env);
+  Napi::Value $Dispose(const Napi::CallbackInfo &info);
 };
 
 #endif // OBJCOBJECT_H
