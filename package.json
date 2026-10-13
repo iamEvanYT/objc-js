@@ -51,17 +51,17 @@
   "description": "Objective-C bridge for Node.js",
   "main": "dist/index.js",
   "dependencies": {
-    "node-addon-api": "^8.5.0",
+    "node-addon-api": "^8.9.2",
     "node-gyp-build": "^4.8.4"
   },
   "devDependencies": {
     "@types/bun": "latest",
-    "@types/node": "^20.0.0",
-    "node-gyp": "^12.1.0",
+    "@types/node": "^20.19.43",
+    "node-gyp": "^12.4.0",
     "prebuildify": "^6.0.1",
-    "prettier": "^3.7.4",
+    "prettier": "^3.9.10",
     "typescript": "^5.9.3",
-    "vitest": "^4.0.18"
+    "vitest": "^4.1.11"
   },
   "gypfile": true,
   "patchedDependencies": {
