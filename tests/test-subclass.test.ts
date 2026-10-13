@@ -718,3 +718,26 @@ describe("DefineClass Edge Cases", () => {
     expect(result).toBeUndefined();
   });
 });
+
+describe("Super calls without arguments", () => {
+  test("should return negative int values from super", () => {
+    // NSString's intValue only needs the primitive methods, so a minimal
+    // subclass lets us call the real superclass implementation.
+    const text = "-5";
+    const NegativeString = NobjcClass.define({
+      name: "TestSuperNegativeIntString",
+      superclass: "NSString",
+      methods: {
+        length: { types: "Q@:", implementation: () => text.length },
+        "characterAtIndex:": {
+          types: "S@:Q",
+          implementation: (_self, index) => text.charCodeAt(Number(index))
+        },
+        intValue: { types: "i@:", implementation: (self) => NobjcClass.super(self, "intValue") }
+      }
+    });
+
+    const instance = (NegativeString as any).alloc().init();
+    expect(instance.intValue()).toBe(-5);
+  });
+});

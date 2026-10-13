@@ -528,6 +528,12 @@ static Class FindSuperClass(id self) {
   return superClass;
 }
 
+/// objc_msgSendSuper for a no-argument method returning T.
+template <typename T>
+static T MsgSendSuperNoArgs(struct objc_super *superStruct, SEL selector) {
+  return ((T(*)(struct objc_super *, SEL))objc_msgSendSuper)(superStruct, selector);
+}
+
 /// Direct objc_msgSendSuper call for methods without arguments.
 static Napi::Value CallSuperNoArgs(
     Napi::Env env,
@@ -566,28 +572,16 @@ static Napi::Value CallSuperNoArgs(
         &superStruct, selector);
     return Napi::Boolean::New(env, result);
   }
-  case 'c': { // char (BOOL on x86_64) — must be read as char, the upper bits
-              // of the return register are undefined
-    char result = ((char (*)(struct objc_super *, SEL))objc_msgSendSuper)(
-        &superStruct, selector);
-    return NumericToJS(env, result);
-  }
-  case 'i':
-  case 's':
-  case 'l': { // signed integers
-    long result = ((long (*)(struct objc_super *, SEL))objc_msgSendSuper)(
-        &superStruct, selector);
-    return Napi::Number::New(env, result);
-  }
-  case 'C':
-  case 'I':
-  case 'S':
-  case 'L': { // unsigned integers
-    unsigned long result =
-        ((unsigned long (*)(struct objc_super *, SEL))objc_msgSendSuper)(
-            &superStruct, selector);
-    return Napi::Number::New(env, result);
-  }
+  // Integers must be read at their declared width: bits above it in the return
+  // register are undefined, so e.g. reading an int as long can corrupt -5.
+  case 'c': return NumericToJS(env, MsgSendSuperNoArgs<char>(&superStruct, selector));
+  case 'i': return NumericToJS(env, MsgSendSuperNoArgs<int>(&superStruct, selector));
+  case 's': return NumericToJS(env, MsgSendSuperNoArgs<short>(&superStruct, selector));
+  case 'l': return NumericToJS(env, MsgSendSuperNoArgs<long>(&superStruct, selector));
+  case 'C': return NumericToJS(env, MsgSendSuperNoArgs<unsigned char>(&superStruct, selector));
+  case 'I': return NumericToJS(env, MsgSendSuperNoArgs<unsigned int>(&superStruct, selector));
+  case 'S': return NumericToJS(env, MsgSendSuperNoArgs<unsigned short>(&superStruct, selector));
+  case 'L': return NumericToJS(env, MsgSendSuperNoArgs<unsigned long>(&superStruct, selector));
   case 'q': { // long long / NSInteger
     long long result =
         ((long long (*)(struct objc_super *, SEL))objc_msgSendSuper)(
