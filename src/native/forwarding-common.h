@@ -75,6 +75,9 @@ struct ForwardingContext {
   void *instancePtr;
   void *superClassPtr;
   
+  // Whether the env still exists; see env-lifetime.h
+  EnvLifetimeRef lifetime;
+
   // Cached JS function reference (avoids re-acquiring mutex in getJSFunction)
   // This is a raw pointer to the FunctionReference stored in the global map.
   // It remains valid as long as the implementation exists.
@@ -120,15 +123,24 @@ struct ForwardingCallbacks {
  *
  * @param mutex      Mutex protecting the isComplete flag
  * @param isComplete Flag set to true when the JS callback completes
+ * @param lifetime   The callback's env. If it is torn down, Node drops the
+ *                   queued call without running it, so stop waiting.
+ *                   May be nullptr when waiting on the JS thread itself.
  * @param label      Optional label for debug logging (nullptr to disable)
+ * @return true if the callback completed, false if the env was torn down
  */
-inline void PumpRunLoopUntilComplete(std::mutex &mutex, bool &isComplete,
+inline bool PumpRunLoopUntilComplete(std::mutex &mutex, bool &isComplete,
+                                     EnvLifetime *lifetime,
                                      const char *label = nullptr) {
   int iterations = 0;
   while (true) {
     {
       std::unique_lock<std::mutex> lock(mutex);
-      if (isComplete) break;
+      if (isComplete) return true;
+    }
+    if (lifetime) {
+      std::lock_guard<std::mutex> lock(lifetime->mutex);
+      if (!lifetime->alive) return false;
     }
     iterations++;
     if (label && iterations % nobjc::kRunLoopDebugLogInterval == 0) {

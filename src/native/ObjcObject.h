@@ -1,6 +1,7 @@
 #ifndef OBJCOBJECT_H
 #define OBJCOBJECT_H
 
+#include "env-lifetime.h"
 #include <napi.h>
 #include <objc/objc.h>
 #include <objc/runtime.h>
@@ -49,6 +50,7 @@ struct PreparedSend {
 
 struct NobjcEnvData {
   Napi::FunctionReference objcObjectConstructor;
+  EnvLifetimeRef lifetime = std::make_shared<EnvLifetime>();
 };
 
 class ObjcObject : public Napi::ObjectWrap<ObjcObject> {

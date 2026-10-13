@@ -153,6 +153,17 @@ static void SubclassForwardInvocation(id self, SEL _cmd,
         return std::nullopt;
       }
 
+      // After env teardown the TSFN has been freed by Node, so don't touch it.
+      const EnvLifetimeRef &lifetime = it->second.lifetime;
+      std::lock_guard<std::mutex> lifetimeLock(lifetime->mutex);
+      if (!lifetime->alive) {
+        if (lifetime->ShouldReportIgnoredCall()) {
+          NOBJC_WARN("JS environment was torn down; ignoring call to %s and any "
+                     "later calls into it", sel_getName(sel));
+        }
+        return std::nullopt;
+      }
+
       // Acquire the TSFN
       Napi::ThreadSafeFunction tsfn = methodIt->second.callback;
       napi_status acq_status = tsfn.Acquire();
@@ -166,6 +177,7 @@ static void SubclassForwardInvocation(id self, SEL _cmd,
       ctx.typeEncoding = methodIt->second.typeEncoding;
       ctx.js_thread = it->second.js_thread;
       ctx.env = it->second.env;
+      ctx.lifetime = lifetime;
       ctx.skipDirectCallForElectron = false; // Subclass always tries direct call
       ctx.instancePtr = capturedSelfPtr;
       ctx.superClassPtr = it->second.superClass;
@@ -206,6 +218,13 @@ static void SubclassForwardInvocation(id self, SEL _cmd,
 
       auto methodIt = it->second.methods.find(sel);
       if (methodIt == it->second.methods.end()) {
+        return std::nullopt;
+      }
+
+      // After env teardown the TSFN has been freed by Node, so don't touch it.
+      const EnvLifetimeRef &lifetime = it->second.lifetime;
+      std::lock_guard<std::mutex> lifetimeLock(lifetime->mutex);
+      if (!lifetime->alive) {
         return std::nullopt;
       }
 
@@ -307,6 +326,7 @@ Napi::Value DefineClass(const Napi::CallbackInfo &info) {
       .superClass = (__bridge void *)superClass,
       .methods = {},
       .env = env,
+      .lifetime = ObjcObject::GetEnvData(env)->lifetime,
       .js_thread = pthread_self(),
       .isElectron = isElectron,
   };

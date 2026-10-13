@@ -1,6 +1,7 @@
 #ifndef PROTOCOL_STORAGE_H
 #define PROTOCOL_STORAGE_H
 
+#include "env-lifetime.h"
 #include <condition_variable>
 #include <mutex>
 #include <napi.h>
@@ -65,6 +66,8 @@ struct ProtocolImplementation {
   std::string className;
   // Store the environment for direct calls
   napi_env env;
+  // Whether `env` (and so the TSFNs and JS callbacks above) still exists
+  EnvLifetimeRef lifetime;
   // Store the JS thread ID for thread detection
   pthread_t js_thread;
   // Flag to indicate if running in Electron (requires TSFN path always)
@@ -94,6 +97,8 @@ struct SubclassImplementation {
   std::unordered_map<SEL, SubclassMethodInfo, SELHash> methods;
   // Store the environment for direct calls
   napi_env env;
+  // Whether `env` (and so the TSFNs and JS callbacks above) still exists
+  EnvLifetimeRef lifetime;
   // Store the JS thread ID for thread detection
   pthread_t js_thread;
   // Flag to indicate if running in Electron

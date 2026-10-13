@@ -157,8 +157,9 @@ bool FallbackToTSFN(Napi::ThreadSafeFunction &tsfn, InvocationData *data,
     return false;
   }
 
-  // Wait for callback by pumping CFRunLoop
-  PumpRunLoopUntilComplete(completionMutex, isComplete);
+  // Wait for callback by pumping CFRunLoop. This only runs on the JS thread
+  // (after a failed direct call), so teardown can't happen while waiting.
+  PumpRunLoopUntilComplete(completionMutex, isComplete, nullptr);
   
   return true;
 }
@@ -262,6 +263,17 @@ void ForwardInvocation(id self, SEL _cmd, NSInvocation *invocation) {
         return std::nullopt;
       }
 
+      // After env teardown the TSFN has been freed by Node, so don't touch it.
+      const EnvLifetimeRef &lifetime = it->second.lifetime;
+      std::lock_guard<std::mutex> lifetimeLock(lifetime->mutex);
+      if (!lifetime->alive) {
+        if (lifetime->ShouldReportIgnoredCall()) {
+          NOBJC_WARN("JS environment was torn down; ignoring call to %s and any "
+                     "later calls into it", sel_getName(sel));
+        }
+        return std::nullopt;
+      }
+
       // Acquire the TSFN
       Napi::ThreadSafeFunction tsfn = methodIt->second.tsfn;
       napi_status acq_status = tsfn.Acquire();
@@ -274,6 +286,7 @@ void ForwardInvocation(id self, SEL _cmd, NSInvocation *invocation) {
       ctx.tsfn = tsfn;
       ctx.js_thread = it->second.js_thread;
       ctx.env = it->second.env;
+      ctx.lifetime = lifetime;
       ctx.skipDirectCallForElectron = it->second.isElectron;
       ctx.instancePtr = nullptr;   // Not used for protocols
       ctx.superClassPtr = nullptr; // Not used for protocols
@@ -318,6 +331,13 @@ void ForwardInvocation(id self, SEL _cmd, NSInvocation *invocation) {
         return std::nullopt;
       }
 
+      // After env teardown the TSFN has been freed by Node, so don't touch it.
+      const EnvLifetimeRef &lifetime = it->second.lifetime;
+      std::lock_guard<std::mutex> lifetimeLock(lifetime->mutex);
+      if (!lifetime->alive) {
+        return std::nullopt;
+      }
+
       Napi::ThreadSafeFunction tsfn = methodIt->second.tsfn;
       napi_status acq_status = tsfn.Acquire();
       if (acq_status != napi_ok) {
@@ -343,9 +363,15 @@ void DeallocImplementation(id self, SEL _cmd) {
         // Release all ThreadSafeFunctions and JS callbacks
         // Do this carefully to avoid issues during shutdown
         try {
-          for (auto &pair : it->second.methods) {
-            // Release the ThreadSafeFunction
-            pair.second.tsfn.Release();
+          EnvLifetime &lifetime = *it->second.lifetime;
+          std::lock_guard<std::mutex> lifetimeLock(lifetime.mutex);
+          // After env teardown Node has already freed these TSFNs, and the
+          // JS callbacks were reset by the cleanup hook.
+          if (lifetime.alive) {
+            for (auto &pair : it->second.methods) {
+              // Release the ThreadSafeFunction
+              pair.second.tsfn.Release();
+            }
           }
           it->second.methods.clear();
         } catch (...) {

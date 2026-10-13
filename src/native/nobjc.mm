@@ -2,7 +2,9 @@
 #include "call-function.h"
 #include "pointer-utils.h"
 #include "protocol-impl.h"
+#include "protocol-manager.h"
 #include "subclass-impl.h"
+#include "subclass-manager.h"
 #include <Foundation/Foundation.h>
 #include <dlfcn.h>
 #include <napi.h>
@@ -107,8 +109,40 @@ static void CleanupEnvData(napi_env, void *data, void *) {
   delete static_cast<NobjcEnvData *>(data);
 }
 
+/**
+ * Env cleanup hook. Node runs it on the JS thread before it finalizes the
+ * env's TSFNs and wrapped objects, so JS references can still be deleted here.
+ */
+static void MarkEnvTornDown(void *arg) {
+  auto *lifetime = static_cast<EnvLifetimeRef *>(arg);
+  {
+    std::lock_guard<std::mutex> lock((*lifetime)->mutex);
+    (*lifetime)->alive = false;
+  }
+
+  // Protocol and subclass storage is process-global and outlives the env, so
+  // its JS references would otherwise be deleted against a freed env later.
+  nobjc::ProtocolManager::Instance().WithLock([lifetime](auto &map) {
+    for (auto &[ptr, impl] : map) {
+      if (impl.lifetime != *lifetime) continue;
+      for (auto &[sel, method] : impl.methods) method.jsCallback.Reset();
+    }
+  });
+  nobjc::SubclassManager::Instance().WithLock([lifetime](auto &map) {
+    for (auto &[ptr, impl] : map) {
+      if (impl.lifetime != *lifetime) continue;
+      for (auto &[sel, method] : impl.methods) method.jsCallback.Reset();
+    }
+  });
+
+  delete lifetime;
+}
+
 Napi::Object InitAll(Napi::Env env, Napi::Object exports) {
-  napi_set_instance_data(env, new NobjcEnvData(), CleanupEnvData, nullptr);
+  auto *envData = new NobjcEnvData();
+  napi_set_instance_data(env, envData, CleanupEnvData, nullptr);
+  napi_add_env_cleanup_hook(env, MarkEnvTornDown,
+                            new EnvLifetimeRef(envData->lifetime));
   ObjcObject::Init(env, exports);
   exports.Set("LoadLibrary", Napi::Function::New(env, LoadLibrary));
   exports.Set("GetClassObject", Napi::Function::New(env, GetClassObject));

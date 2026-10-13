@@ -16,7 +16,7 @@ void ForwardInvocationCommon(NSInvocation *invocation,
   // Look up context data (acquires TSFN)
   auto contextOpt = callbacks.lookupContext(lookupKey, selector);
   if (!contextOpt) {
-    NOBJC_WARN("Lookup failed for selector %s", selectorCStr);
+    NOBJC_LOG("Lookup failed for selector %s", selectorCStr);
     [invocation release];
     return;
   }
@@ -121,21 +121,33 @@ void ForwardInvocationCommon(NSInvocation *invocation,
     data->completionCv = &completionCv;
     data->isComplete = &isComplete;
 
-    // Transfer ownership to TSFN callback
-    status = ctx.tsfn.NonBlockingCall(dataGuard.release(), CallJSCallback);
-    ctx.tsfn.Release();
+    // Transfer ownership to TSFN callback. Hold the lifetime lock so the env
+    // can't be torn down (freeing the TSFN) between the check and the call.
+    dataGuard.release();
+    status = napi_closing;
+    {
+      std::lock_guard<std::mutex> lifetimeLock(ctx.lifetime->mutex);
+      if (ctx.lifetime->alive) {
+        status = ctx.tsfn.NonBlockingCall(data, CallJSCallback);
+        ctx.tsfn.Release();
+      }
+    }
 
     if (status != napi_ok) {
-      NOBJC_ERROR("Failed to call ThreadSafeFunction for selector %s (status: %d)",
-                  selectorCStr, status);
+      if (status != napi_closing) {
+        NOBJC_ERROR("Failed to call ThreadSafeFunction for selector %s (status: %d)",
+                    selectorCStr, status);
+      }
       // We already released from guard, so clean up manually
       [invocation release];
       delete data;
       return;
     }
 
-    // Wait for callback by pumping CFRunLoop
-    PumpRunLoopUntilComplete(completionMutex, isComplete,
+    // Wait for callback by pumping CFRunLoop. If the env is torn down first,
+    // Node drops the call without running it; `data` and the invocation are
+    // leaked rather than risk freeing something the callback still uses.
+    PumpRunLoopUntilComplete(completionMutex, isComplete, ctx.lifetime.get(),
                             "ForwardInvocationCommon");
     // Data cleaned up in callback
   }

@@ -290,6 +290,12 @@ struct BlockInfo {
   // Napi environment
   napi_env env;
 
+  // Whether `env` still exists; see env-lifetime.h
+  EnvLifetimeRef lifetime;
+
+  // Set by the TSFN finalizer, after which tsfn and jsFunction are gone.
+  std::atomic<bool> tsfnFinalized{false};
+
   // The block descriptor (must outlive the block)
   NobjcBlockDescriptor descriptor;
 
@@ -307,13 +313,17 @@ struct BlockInfo {
   // Ensures we only release the TSFN's initial ref once.
   std::atomic<bool> cleanupScheduled{false};
 
+  // BlockInfo is freed once both the Objective-C side (refCount reaching
+  // zero) and the TSFN finalizer are done with it. Env teardown finalizes the
+  // TSFN early, while Objective-C may still hold the block and call it.
+  std::atomic<int> owners{2};
+
   ~BlockInfo() {
-    // Free the FFI closure
+    // Free the FFI closure. jsFunction was already reset by the TSFN finalizer.
     if (closure) {
       ffi_closure_free(closure);
       closure = nullptr;
     }
-    jsFunction.Reset();
   }
 };
 
@@ -345,9 +355,34 @@ inline void RetainBlockInfo(BlockInfo *info) {
   info->refCount.fetch_add(1, std::memory_order_relaxed);
 }
 
+inline void DropBlockInfoOwner(BlockInfo *info) {
+  if (info->owners.fetch_sub(1, std::memory_order_acq_rel) == 1) {
+    delete info;
+  }
+}
+
+// Whether the block's TSFN and JS function can be used. Callers on a non-JS
+// thread must hold info->lifetime->mutex across this check and the TSFN call.
+inline bool CanCallBlockJS(BlockInfo *info) {
+  return info->lifetime->alive &&
+         !info->tsfnFinalized.load(std::memory_order_acquire);
+}
+
+inline void ReportIgnoredBlockCall(BlockInfo *info) {
+  std::lock_guard<std::mutex> lock(info->lifetime->mutex);
+  if (info->lifetime->ShouldReportIgnoredCall()) {
+    NOBJC_WARN("JS environment was torn down; ignoring call to a block and any "
+               "later calls into it");
+  }
+}
+
 inline void BlockTSFNFinalize(Napi::Env /*env*/, BlockInfo *info,
                                BlockInfo * /*data*/) {
-  delete info;
+  info->tsfnFinalized.store(true, std::memory_order_release);
+  // The env is still valid inside a TSFN finalizer, even during teardown, so
+  // this is the last safe point to delete the JS reference.
+  info->jsFunction.Reset();
+  DropBlockInfoOwner(info);
 }
 
 inline void ScheduleBlockInfoCleanup(BlockInfo *info) {
@@ -359,10 +394,18 @@ inline void ScheduleBlockInfoCleanup(BlockInfo *info) {
     return;
   }
 
-  napi_status status = info->tsfn.Release();
-  if (status != napi_ok) {
-    NOBJC_ERROR("ScheduleBlockInfoCleanup: TSFN release failed (status=%d)", status);
+  {
+    std::lock_guard<std::mutex> lock(info->lifetime->mutex);
+    // After teardown Node finalizes the TSFN itself; releasing it would touch
+    // freed memory (this is what used to hang on exit).
+    if (CanCallBlockJS(info)) {
+      napi_status status = info->tsfn.Release();
+      if (status != napi_ok) {
+        NOBJC_ERROR("ScheduleBlockInfoCleanup: TSFN release failed (status=%d)", status);
+      }
+    }
   }
+  DropBlockInfoOwner(info);
 }
 
 inline void ReleaseBlockInfo(BlockInfo *info) {
@@ -677,6 +720,17 @@ inline void BlockTSFNCallback(Napi::Env env, Napi::Function /*jsCallback*/,
 
 // MARK: - FFI Closure Callback (Block Invoke)
 
+// Gives Objective-C a zero/nil/NO result when the JS function can't be called.
+inline void ZeroBlockReturn(ffi_cif *cif, void *ret) {
+  if (!ret || cif->rtype->type == FFI_TYPE_VOID) return;
+  size_t size = cif->rtype->size;
+  // libffi closures return small integers widened to a full ffi_arg.
+  if (cif->rtype->type != FFI_TYPE_STRUCT && size < sizeof(ffi_arg)) {
+    size = sizeof(ffi_arg);
+  }
+  memset(ret, 0, size);
+}
+
 /**
  * This is the function pointer stored in the block's `invoke` field.
  * Called by the ObjC runtime when the block is invoked.
@@ -698,6 +752,15 @@ inline void BlockInvokeCallback(ffi_cif *cif, void *ret, void **args,
   bool is_js_thread = pthread_equal(pthread_self(), info->js_thread);
 
   if (is_js_thread) {
+    // Teardown runs on this thread, so no lock is needed. The block can
+    // still be invoked during teardown, e.g. by an object being finalized.
+    if (!CanCallBlockJS(info)) {
+      ReportIgnoredBlockCall(info);
+      ZeroBlockReturn(cif, ret);
+      ReleaseBlockInfo(info);
+      return;
+    }
+
     // Direct call on JS thread
     @autoreleasepool {
       try {
@@ -745,26 +808,40 @@ inline void BlockInvokeCallback(ffi_cif *cif, void *ret, void **args,
       callData.argValues[i] = args[i];
     }
 
-    // Acquire the TSFN
-    napi_status acq_status = info->tsfn.Acquire();
-    if (acq_status != napi_ok) {
-      NOBJC_ERROR("BlockInvokeCallback: Failed to acquire TSFN");
-      ReleaseBlockInfo(info);
-      return;
+    // Acquire and call the TSFN. Hold the lifetime lock so the env can't be
+    // torn down (freeing the TSFN) between the check and the calls.
+    napi_status status = napi_closing;
+    {
+      std::lock_guard<std::mutex> lock(info->lifetime->mutex);
+      if (CanCallBlockJS(info)) {
+        status = info->tsfn.Acquire();
+        if (status == napi_ok) {
+          status = info->tsfn.NonBlockingCall(&callData, BlockTSFNCallback);
+          info->tsfn.Release();
+        }
+      }
     }
 
-    // Call via TSFN
-    napi_status status = info->tsfn.NonBlockingCall(&callData, BlockTSFNCallback);
-    info->tsfn.Release();
-
     if (status != napi_ok) {
-      NOBJC_ERROR("BlockInvokeCallback: TSFN call failed (status=%d)", status);
+      if (status == napi_closing) {
+        ReportIgnoredBlockCall(info);
+      } else {
+        NOBJC_ERROR("BlockInvokeCallback: TSFN call failed (status=%d)", status);
+      }
+      ZeroBlockReturn(cif, ret);
       ReleaseBlockInfo(info);
       return;
     }
 
     // Wait for completion by pumping CFRunLoop
-    PumpRunLoopUntilComplete(callData.completionMutex, callData.isComplete);
+    if (!PumpRunLoopUntilComplete(callData.completionMutex, callData.isComplete,
+                                  info->lifetime.get())) {
+      // The env was torn down and Node dropped the queued call, so
+      // BlockTSFNCallback will never run or release its ref.
+      ReportIgnoredBlockCall(info);
+      ZeroBlockReturn(cif, ret);
+      ReleaseBlockInfo(info);
+    }
   }
 }
 
@@ -824,6 +901,7 @@ inline id CreateBlockFromJSFunction(Napi::Env env,
   auto *blockInfo = new BlockInfo();
   blockInfo->signature = sig;
   blockInfo->env = env;
+  blockInfo->lifetime = ObjcObject::GetEnvData(env)->lifetime;
   blockInfo->js_thread = pthread_self();
   blockInfo->closure = nullptr;
   blockInfo->heapBlock = nullptr;

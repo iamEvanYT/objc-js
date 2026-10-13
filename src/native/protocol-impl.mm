@@ -135,6 +135,7 @@ Napi::Value CreateProtocolImplementation(const Napi::CallbackInfo &info) {
       .methods = {},
       .className = className,
       .env = env,
+      .lifetime = ObjcObject::GetEnvData(env)->lifetime,
       .js_thread = pthread_self(), // Store the current (JS) thread ID
       .isElectron = isElectron
   };
