@@ -443,7 +443,8 @@ inline void NobjcBlockDisposeHelper(const void *src) {
  * the FFI arg pointer.
  *
  * Strategy:
- * 1. Tagged pointers (arm64: high bit set) are always valid objects
+ * 1. Tagged pointers (arm64: high bit set; x86_64: low bit set and a
+ *    registered tag class) are treated as objects
  * 2. Use malloc_zone_from_ptr() to check if it's a heap allocation
  * 3. If it is, verify it has a valid class pointer
  * 4. Fall back to image-backed singleton detection for constant objects like
@@ -507,12 +508,31 @@ inline bool LooksLikeImageBackedObjCObject(uintptr_t val) {
 inline bool LooksLikeObjCObject(uintptr_t val) {
   if (val == 0) return false;  // nil
 
+#if defined(__x86_64__)
+  // Values below 4096 are definitely not objects — they're small integers
+  // or null page addresses
+  if (val < 4096) return false;
+
+  // Tagged pointer check (x86_64: low bit set). Heap and image-backed objects
+  // are always aligned, so an odd value is either a tagged pointer or an
+  // integer. The runtime XORs a tagged pointer's other bits with a random
+  // per-process value, so real ones are effectively never at or below 2^32,
+  // while indexes and counts are. object_getClass alone would accept many odd
+  // integers, since most tag slots are registered. The cost: with
+  // OBJC_DISABLE_TAG_OBFUSCATION set, small tagged objects arrive as numbers.
+  // object_getClass resolves tagged pointers through a table lookup without
+  // reading memory. Use typedBlock to avoid guessing altogether.
+  if (val & 1) {
+    return val > UINT32_MAX && object_getClass((__bridge id)(void *)val) != nil;
+  }
+#else
   // Tagged pointer check (arm64: high bit set)
   if (val & (1ULL << 63)) return true;
 
   // Values below 4096 are definitely not objects — they're small integers
   // or null page addresses
   if (val < 4096) return false;
+#endif
 
   // Check if this pointer was allocated via malloc (all ObjC heap objects are).
   // malloc_zone_from_ptr returns non-NULL only for valid heap allocations.

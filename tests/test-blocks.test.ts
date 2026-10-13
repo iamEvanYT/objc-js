@@ -154,6 +154,63 @@ describe("Block Support Tests", () => {
     expect(receivedString).toBe("hello");
   });
 
+  test("should receive tagged pointer objects as objects in untyped blocks", () => {
+    // Short strings and small numbers are tagged pointers. On x86_64 their
+    // pointer bits are obfuscated per process, so this only fails there when
+    // tagged pointer detection is wrong (arm64 detection is deterministic).
+    const arr = NSMutableArray.array();
+    for (const s of ["a", "b", "xyz"]) {
+      arr.addObject$(NSString.stringWithUTF8String$(s));
+    }
+    for (const n of [0, 1, 42, -7]) {
+      arr.addObject$(NSNumber.numberWithInt$(n));
+    }
+
+    const kinds: string[] = [];
+    const values: string[] = [];
+
+    (arr as _NSArray).enumerateObjectsUsingBlock$((obj: any, _idx: number, _stop: any) => {
+      kinds.push(typeof obj);
+      values.push(obj.toString());
+    });
+
+    expect(kinds).toEqual(["object", "object", "object", "object", "object", "object", "object"]);
+    expect(values).toEqual(["a", "b", "xyz", "0", "1", "42", "-7"]);
+  });
+
+  test("should receive tagged pointer keys and values as objects in untyped dictionary blocks", () => {
+    const dict = NSMutableDictionary.dictionary();
+    dict.setObject$forKey$(NSNumber.numberWithInt$(5), NSString.stringWithUTF8String$("k"));
+
+    const entries: [string, string, string, string][] = [];
+
+    (dict as _NSDictionary).enumerateKeysAndObjectsUsingBlock$((key: any, obj: any, _stop: any) => {
+      entries.push([typeof key, typeof obj, key.toString(), obj.toString()]);
+    });
+
+    expect(entries).toEqual([["object", "object", "k", "5"]]);
+  });
+
+  test("should receive large odd indexes as numbers in untyped blocks", () => {
+    // On x86_64 an odd integer looks like a tagged pointer, so this checks
+    // indexes past 4096 aren't mistaken for objects there.
+    const arr = NSMutableArray.array();
+    const item = NSString.stringWithUTF8String$("item");
+    for (let i = 0; i < 5000; i++) {
+      arr.addObject$(item);
+    }
+
+    const indexes: unknown[] = [];
+
+    (arr as _NSArray).enumerateObjectsUsingBlock$((_obj: any, idx: any, _stop: any) => {
+      indexes.push(idx);
+    });
+
+    expect(indexes.length).toBe(5000);
+    // -1 means every index arrived as the expected number
+    expect(indexes.findIndex((idx, i) => idx !== i)).toBe(-1);
+  });
+
   test("should support typedBlock object signatures for NSArray enumeration", () => {
     const arr = NSMutableArray.array();
     arr.addObject$(NSNumber.numberWithInt$(10));
