@@ -298,7 +298,7 @@ See [Protocol Implementation Documentation](./protocol-implementation.md) for mo
 Attach an explicit Objective-C block signature to a JavaScript function.
 
 ```typescript
-typedBlock(signature, fn)
+typedBlock(signature, fn);
 ```
 
 **Parameters:**
