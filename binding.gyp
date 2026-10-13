@@ -24,6 +24,20 @@
             "libraries": [
                 "<!@(brew --prefix libffi)/lib/libffi.a"
             ],
+            "conditions": [
+                [
+                    "OS=='mac'",
+                    {
+                        "link_settings": {
+                            "libraries": [
+                                "-framework Foundation",
+                                "-framework CoreFoundation",
+                                "-lobjc"
+                            ]
+                        }
+                    }
+                ]
+            ],
             "xcode_settings": {
                 "MACOSX_DEPLOYMENT_TARGET": "13.3",
                 "CLANG_CXX_LIBRARY": "libc++",
