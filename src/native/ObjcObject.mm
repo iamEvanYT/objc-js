@@ -342,10 +342,33 @@ void ObjcObject::Init(Napi::Env env, Napi::Object exports) {
                       InstanceMethod("$prepareSend", &ObjcObject::$PrepareSend),
                       InstanceMethod("$msgSendPrepared", &ObjcObject::$MsgSendPrepared),
                       InstanceMethod("$getPointer", &ObjcObject::GetPointer),
+                      InstanceMethod("$dispose", &ObjcObject::$Dispose),
                   });
   GetConstructorRef(env) = Napi::Persistent(func);
   exports.Set("ObjcObject", func);
 }
+
+namespace {
+// Rejects calls on a disposed wrapper, and marks a call as running on it for
+// the rest of the scope (see ObjcObject::activeCalls).
+class ActiveCallScope {
+public:
+  ActiveCallScope(ObjcObject *wrapper, Napi::Env env) : wrapper_(wrapper) {
+    wrapper_->GetObjcObject(env);
+    wrapper_->activeCalls++;
+  }
+  ~ActiveCallScope() {
+    if (--wrapper_->activeCalls == 0 && wrapper_->disposed) {
+      wrapper_->ReleaseObject();
+    }
+  }
+  ActiveCallScope(const ActiveCallScope &) = delete;
+  ActiveCallScope &operator=(const ActiveCallScope &) = delete;
+
+private:
+  ObjcObject *wrapper_;
+};
+} // namespace
 
 Napi::Object ObjcObject::NewInstance(Napi::Env env, id obj) {
   Napi::EscapableHandleScope scope(env);
@@ -358,6 +381,7 @@ Napi::Object ObjcObject::NewInstance(Napi::Env env, id obj) {
 
 Napi::Value ObjcObject::$MsgSend(const Napi::CallbackInfo &info) {
   Napi::Env env = info.Env();
+  ActiveCallScope callScope(this, env);
 
   if (info.Length() < 1 || !info[0].IsString()) {
     Napi::TypeError::New(env, "Expected at least one string argument")
@@ -574,13 +598,31 @@ Napi::Value ObjcObject::$MsgSend(const Napi::CallbackInfo &info) {
 
 Napi::Value ObjcObject::GetPointer(const Napi::CallbackInfo &info) {
   Napi::Env env = info.Env();
-  return PointerToBuffer(env, objcObject);
+  return PointerToBuffer(env, GetObjcObject(env));
+}
+
+/**
+ * Release the wrapped object now instead of when the wrapper is garbage
+ * collected. Idempotent. Classes are never deallocated (and NobjcLibrary
+ * caches their wrappers), so disposing one does nothing.
+ */
+Napi::Value ObjcObject::$Dispose(const Napi::CallbackInfo &info) {
+  if (disposed || object_isClass(objcObject)) {
+    return info.Env().Undefined();
+  }
+  disposed = true;
+  // Otherwise the outermost running call releases it when it returns
+  if (activeCalls == 0) {
+    ReleaseObject();
+  }
+  return info.Env().Undefined();
 }
 
 // MARK: - $RespondsToSelector (H4: avoid double FFI round-trip)
 
 Napi::Value ObjcObject::$RespondsToSelector(const Napi::CallbackInfo &info) {
   Napi::Env env = info.Env();
+  ActiveCallScope callScope(this, env);
 
   if (info.Length() < 1 || !info[0].IsString()) {
     Napi::TypeError::New(env, "$respondsToSelector requires a string argument")
@@ -619,6 +661,7 @@ Napi::Value ObjcObject::$RespondsToSelector(const Napi::CallbackInfo &info) {
  */
 Napi::Value ObjcObject::$PrepareSend(const Napi::CallbackInfo &info) {
   Napi::Env env = info.Env();
+  ActiveCallScope callScope(this, env);
 
   if (info.Length() < 1 || !info[0].IsString()) {
     Napi::TypeError::New(env, "$prepareSend requires a string argument")
@@ -720,6 +763,7 @@ Napi::Value ObjcObject::$PrepareSend(const Napi::CallbackInfo &info) {
  */
 Napi::Value ObjcObject::$MsgSendPrepared(const Napi::CallbackInfo &info) {
   Napi::Env env = info.Env();
+  ActiveCallScope callScope(this, env);
 
   if (info.Length() < 1 || !info[0].IsExternal()) {
     Napi::TypeError::New(env, "$msgSendPrepared requires a PreparedSend handle as first argument")

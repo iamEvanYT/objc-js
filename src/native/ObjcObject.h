@@ -56,6 +56,12 @@ struct NobjcEnvData {
 class ObjcObject : public Napi::ObjectWrap<ObjcObject> {
 public:
   __strong id objcObject;
+  // Set by $dispose(). The wrapper rejects any further use.
+  bool disposed = false;
+  // Calls currently running on this wrapper (JS thread only). Disposing it
+  // from a callback inside one of them defers the release until they return,
+  // so the receiver can't be freed mid-call.
+  int activeCalls = 0;
   static void Init(Napi::Env env, Napi::Object exports);
   static NobjcEnvData *GetEnvData(Napi::Env env);
   static Napi::FunctionReference &GetConstructorRef(Napi::Env env);
@@ -81,11 +87,23 @@ public:
         .ThrowAsJavaScriptException();
   }
   static Napi::Object NewInstance(Napi::Env env, id obj);
-  ~ObjcObject() {
-    if (objcObject) {
-      objc_release(objcObject);
-      objcObject = nil;
+  ~ObjcObject() { ReleaseObject(); }
+
+  /**
+   * The wrapped object. Throws if the wrapper was disposed, so a disposed
+   * object can't silently become nil when passed to Objective-C.
+   */
+  id GetObjcObject(Napi::Env env) const {
+    if (disposed) {
+      throw Napi::Error::New(env, "Objective-C object has been disposed");
     }
+    return objcObject;
+  }
+
+  void ReleaseObject() {
+    id object = objcObject;
+    objcObject = nil;
+    if (object) objc_release(object);
   }
 
 private:
@@ -94,6 +112,7 @@ private:
   Napi::Value $PrepareSend(const Napi::CallbackInfo &info);
   Napi::Value $MsgSendPrepared(const Napi::CallbackInfo &info);
   Napi::Value GetPointer(const Napi::CallbackInfo &info);
+  Napi::Value $Dispose(const Napi::CallbackInfo &info);
 };
 
 #endif // OBJCOBJECT_H

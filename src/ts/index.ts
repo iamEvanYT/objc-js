@@ -361,6 +361,38 @@ function getPointer(obj: NobjcObject): Buffer {
 }
 
 /**
+ * Release the Objective-C object held by a NobjcObject now, instead of
+ * whenever the wrapper is garbage collected.
+ *
+ * Use this for objects whose lifetime matters, such as ones holding JS
+ * callbacks (event monitors, observers, delegates). Afterwards, calling a
+ * method on the wrapper or passing it to Objective-C throws. Disposing twice
+ * is a no-op, and disposing a class does nothing (classes are never freed).
+ *
+ * Only the wrapper's own reference is released. Other wrappers of the same
+ * object, and Objective-C code that retains it, keep it alive.
+ *
+ * @param obj - The NobjcObject to dispose
+ *
+ * @example
+ * ```typescript
+ * const monitor = NSEvent.addLocalMonitorForEventsMatchingMask$handler$(mask, handler);
+ * // later
+ * NSEvent.removeMonitor$(monitor);
+ * dispose(monitor);
+ * ```
+ */
+function dispose(obj: NobjcObject): void {
+  const nativeObj = nativeObjectMap.get(obj as unknown as object);
+  if (!nativeObj) {
+    throw new TypeError("Argument must be a NobjcObject instance");
+  }
+  nativeObj.$dispose();
+  // Cached method closures would only throw from now on
+  methodCache.delete(nativeObj);
+}
+
+/**
  * Create a NobjcObject from a raw native pointer.
  *
  * @param pointer - A Buffer or BigInt containing the pointer address
@@ -906,6 +938,7 @@ export {
   typedBlock,
   RunLoop,
   getPointer,
+  dispose,
   fromPointer,
   callFunction,
   callVariadicFunction

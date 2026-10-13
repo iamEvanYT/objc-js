@@ -333,7 +333,7 @@ struct WriteLeafToBufferVisitor {
     if (!jsValue.IsNull() && !jsValue.IsUndefined() && jsValue.IsObject()) {
       ObjcObject *wrapper = ObjcObject::Unwrap(jsValue.As<Napi::Object>());
       if (wrapper) {
-        objcObj = wrapper->objcObject;
+        objcObj = wrapper->GetObjcObject(jsValue.Env());
       }
     }
     memcpy(dest, &objcObj, sizeof(objcObj));

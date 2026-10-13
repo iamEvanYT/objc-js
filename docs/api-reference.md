@@ -95,6 +95,8 @@ console.log(obj.toString());
 // obj is automatically released when no longer referenced
 ```
 
+To release an object at a specific point instead of when it is garbage collected, use [`dispose()`](#dispose).
+
 ## Struct Support
 
 Objective-C methods that accept or return C structs are handled automatically. Pass plain JavaScript objects (or arrays) and receive JavaScript objects with named fields.
@@ -435,6 +437,41 @@ Only use this function when:
 - You received the pointer from `getPointer()` and the object is still alive
 - You received the pointer from a trusted native API that guarantees the object's validity
 - You're interfacing with external native code that provides valid Objective-C object pointers
+
+## dispose()
+
+Release the Objective-C object held by a NobjcObject now, instead of whenever the wrapper is garbage collected. Use it for objects whose lifetime matters, such as ones that hold JavaScript callbacks (event monitors, notification observers, delegates).
+
+```typescript
+function dispose(obj: NobjcObject): void;
+```
+
+**Parameters:**
+
+- `obj` (NobjcObject): The NobjcObject to dispose
+
+**Example: Removing an event monitor**
+
+```typescript
+import { NobjcLibrary, dispose } from "objc-js";
+
+const appKit = new NobjcLibrary("/System/Library/Frameworks/AppKit.framework/AppKit");
+const NSEvent = appKit["NSEvent"];
+
+const monitor = NSEvent.addLocalMonitorForEventsMatchingMask$handler$(mask, (event) => event);
+
+// Later: unregister it, then release it (and the JS handler it holds)
+NSEvent.removeMonitor$(monitor);
+dispose(monitor);
+```
+
+After disposing:
+
+- Calling a method on the object, or passing it to Objective-C, throws `Objective-C object has been disposed`
+- Disposing it again does nothing
+- If it is disposed from a callback while one of its own methods is running, the release waits until that method returns
+
+Only the wrapper's own reference is released. Other wrappers of the same object, and Objective-C code that retains it, keep it alive. Disposing a class does nothing, since classes are never deallocated.
 
 ## callFunction()
 

@@ -605,6 +605,11 @@ inline void SetInvocationReturnFromJS(NSInvocation *invocation,
       Napi::Object resultObj = result.As<Napi::Object>();
       if (ObjcObject::IsInstance(result.Env(), resultObj)) {
         ObjcObject *objcObj = Napi::ObjectWrap<ObjcObject>::Unwrap(resultObj);
+        if (objcObj->disposed) {
+          NSLog(@"Warning: returned a disposed object for selector %s",
+                selectorName);
+          break;
+        }
         id objcValue = objcObj->objcObject;
         [invocation setReturnValue:&objcValue];
       }

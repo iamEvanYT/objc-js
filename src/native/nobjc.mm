@@ -50,7 +50,7 @@ Napi::Value GetPointer(const Napi::CallbackInfo &info) {
   }
   
   ObjcObject *objcObj = Napi::ObjectWrap<ObjcObject>::Unwrap(obj);
-  return PointerToBuffer(env, objcObj->objcObject);
+  return PointerToBuffer(env, objcObj->GetObjcObject(env));
 }
 
 Napi::Value FromPointer(const Napi::CallbackInfo &info) {

@@ -643,7 +643,11 @@ inline void SetBlockReturnFromJS(Napi::Value result, void *returnPtr,
         Napi::Object obj = result.As<Napi::Object>();
         if (ObjcObject::IsInstance(result.Env(), obj)) {
           ObjcObject *wrapper = Napi::ObjectWrap<ObjcObject>::Unwrap(obj);
-          objcVal = wrapper->objcObject;
+          if (wrapper->disposed) {
+            NOBJC_WARN("SetBlockReturnFromJS: returned a disposed object");
+          } else {
+            objcVal = wrapper->objcObject;
+          }
         }
       }
       memcpy(returnPtr, &objcVal, sizeof(id));
