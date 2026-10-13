@@ -185,9 +185,13 @@ describe("RunLoop Tests", () => {
       // The item is NOT added synchronously -- it's queued on the run loop
       expect(arr.count()).toBe(0);
 
-      // Give the timer a moment to be ready, then pump
+      // Give the timer a moment to be ready, then pump. runMode:beforeDate: returns
+      // after the first source it handles, and on macOS 27+ a zero-delay perform is
+      // only delivered on a later pass, so pump a bounded number of times.
       await new Promise((resolve) => setTimeout(resolve, 50));
-      RunLoop.pump(0.05);
+      for (let i = 0; i < 5 && arr.count() === 0; i++) {
+        RunLoop.pump(0.05);
+      }
 
       expect(arr.count()).toBe(1);
     });
