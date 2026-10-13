@@ -6,7 +6,10 @@
   "os": [
     "darwin"
   ],
-  "repository": "https://github.com/iamEvanYT/objc-js",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/iamEvanYT/objc-js.git"
+  },
   "homepage": "https://github.com/iamEvanYT/objc-js#readme",
   "author": "iamEvan",
   "imports": {
