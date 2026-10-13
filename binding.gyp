@@ -2,6 +2,9 @@
     "targets": [
         {
             "target_name": "nobjc_native",
+            "variables": {
+                "libffi_prefix": "<!(if [ -d deps/libffi-<(target_arch) ]; then cd deps/libffi-<(target_arch) && pwd; else brew --prefix libffi; fi)"
+            },
             "sources": [
                 "src/native/nobjc.mm",
                 "src/native/ObjcObject.mm",
@@ -16,13 +19,13 @@
             ],
             "include_dirs": [
                 "<!@(node -p \"require('node-addon-api').include\")",
-                "<!@(brew --prefix libffi)/include"
+                "<(libffi_prefix)/include"
             ],
             "dependencies": [
                 "<!(node -p \"require('node-addon-api').gyp\")"
             ],
             "libraries": [
-                "<!@(brew --prefix libffi)/lib/libffi.a"
+                "<(libffi_prefix)/lib/libffi.a"
             ],
             "conditions": [
                 [
