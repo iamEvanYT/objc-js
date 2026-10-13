@@ -1,0 +1,91 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Test (arm64)
+    runs-on: macos-26
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Build static libffi (arm64)
+        run: bash scripts/build-libffi.sh arm64
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build
+        run: bun run build
+
+      - name: Test (Bun)
+        run: bun test
+
+      - name: Test (Node.js)
+        run: npx vitest run
+
+  # Runners are Apple Silicon, so this tests the cross-compiled x64 prebuild
+  # that releases ship, using an x64 Bun under Rosetta. Vitest can't run here:
+  # its bundler only has a native binary for the host architecture.
+  test-x64:
+    name: Test (x64 under Rosetta)
+    runs-on: macos-26
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Build static libffi (x64)
+        run: bash scripts/build-libffi.sh x64
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build TypeScript
+        run: bun run build-source
+
+      - name: Prebuild x64 architecture
+        run: |
+          bun run prebuild:x64
+          # node-gyp-build prefers build/ over prebuilds/, so remove it
+          rm -rf build
+
+      - name: Install Rosetta
+        run: /usr/bin/arch -x86_64 /usr/bin/true 2>/dev/null || sudo softwareupdate --install-rosetta --agree-to-license
+
+      - name: Download x64 Bun
+        run: |
+          version="$(bun --version)"
+          base="https://github.com/oven-sh/bun/releases/download/bun-v${version}"
+          cd "$RUNNER_TEMP"
+          curl -fsSL -o bun-darwin-x64-baseline.zip "$base/bun-darwin-x64-baseline.zip"
+          curl -fsSL -o SHASUMS256.txt "$base/SHASUMS256.txt"
+          grep " bun-darwin-x64-baseline.zip$" SHASUMS256.txt | shasum -a 256 -c -
+          unzip -q bun-darwin-x64-baseline.zip
+          echo "BUN_X64=$RUNNER_TEMP/bun-darwin-x64-baseline/bun" >> "$GITHUB_ENV"
+
+      - name: Test (Bun x64)
+        run: |
+          /usr/bin/arch -x86_64 "$BUN_X64" -e 'if (process.arch !== "x64") throw new Error(`expected x64, got ${process.arch}`)'
+          /usr/bin/arch -x86_64 "$BUN_X64" test
