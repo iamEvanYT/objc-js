@@ -59,8 +59,10 @@ jobs:
       - name: Build static libffi (x64)
         run: bash scripts/build-libffi.sh x64
 
+      # Skips objc-js's own install script, which would build the addon for the
+      # host (arm64) and need an arm64 libffi this job doesn't build.
       - name: Install dependencies
-        run: bun install --frozen-lockfile
+        run: bun install --frozen-lockfile --ignore-scripts
 
       - name: Build TypeScript
         run: bun run build-source
