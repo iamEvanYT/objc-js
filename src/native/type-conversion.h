@@ -217,6 +217,26 @@ inline std::string SkipOneFieldEncoding(const char *&ptr) {
 
 // MARK: - ObjC to JS Conversion
 
+// On x86_64 the ObjC runtime encodes BOOL as 'c' (signed char) rather than 'B',
+// so method signatures can't tell BOOL apart from char. BOOL is far more common
+// in ObjC APIs, so 'c' values are surfaced to JS as booleans there, matching
+// arm64 where BOOL is a real bool ('B').
+#if defined(__x86_64__)
+constexpr bool kCharIsObjCBool = true;
+#else
+constexpr bool kCharIsObjCBool = false;
+#endif
+
+// Convert a numeric (non-bool) ObjC value to JS, applying the BOOL rule above.
+template <typename T>
+inline Napi::Value NumericToJS(Napi::Env env, T value) {
+  if constexpr (std::is_same_v<T, char> && kCharIsObjCBool) {
+    return Napi::Boolean::New(env, value != 0);
+  } else {
+    return Napi::Number::New(env, static_cast<double>(value));
+  }
+}
+
 // Visitor for converting ObjC values to JS
 struct ObjCToJSVisitor {
   Napi::Env env;
@@ -224,10 +244,10 @@ struct ObjCToJSVisitor {
 
   // Numeric types -> Number (or Boolean for bool)
   template <typename T>
-  auto operator()(std::type_identity<T>) const 
+  auto operator()(std::type_identity<T>) const
       -> std::enable_if_t<is_numeric_v<T> && !std::is_same_v<T, bool>, Napi::Value> {
     T value = *static_cast<T*>(valuePtr);
-    return Napi::Number::New(env, static_cast<double>(value));
+    return NumericToJS(env, value);
   }
 
   // Bool -> Boolean
@@ -304,7 +324,7 @@ struct ExtractInvocationArgVisitor {
       -> std::enable_if_t<is_numeric_v<T> && !std::is_same_v<T, bool>, Napi::Value> {
     T value;
     [invocation getArgument:&value atIndex:index];
-    return Napi::Number::New(env, static_cast<double>(value));
+    return NumericToJS(env, value);
   }
 
   // Bool -> Boolean
@@ -611,7 +631,7 @@ struct GetInvocationReturnVisitor {
       -> std::enable_if_t<is_numeric_v<T> && !std::is_same_v<T, bool>, Napi::Value> {
     T result;
     [invocation getReturnValue:&result];
-    return Napi::Number::New(env, static_cast<double>(result));
+    return NumericToJS(env, result);
   }
 
   // Bool -> Boolean

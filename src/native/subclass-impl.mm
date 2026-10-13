@@ -566,7 +566,12 @@ static Napi::Value CallSuperNoArgs(
         &superStruct, selector);
     return Napi::Boolean::New(env, result);
   }
-  case 'c':
+  case 'c': { // char (BOOL on x86_64) — must be read as char, the upper bits
+              // of the return register are undefined
+    char result = ((char (*)(struct objc_super *, SEL))objc_msgSendSuper)(
+        &superStruct, selector);
+    return NumericToJS(env, result);
+  }
   case 'i':
   case 's':
   case 'l': { // signed integers

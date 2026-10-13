@@ -311,6 +311,9 @@ struct WriteLeafToBufferVisitor {
     T val;
     if constexpr (is_floating_point_v<T>) {
       val = static_cast<T>(jsValue.As<Napi::Number>().DoubleValue());
+    } else if (std::is_same_v<T, char> && jsValue.IsBoolean()) {
+      // char doubles as BOOL on x86_64
+      val = jsValue.As<Napi::Boolean>().Value() ? 1 : 0;
     } else {
       val = static_cast<T>(jsValue.As<Napi::Number>().Int64Value());
     }

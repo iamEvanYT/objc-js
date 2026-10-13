@@ -97,6 +97,12 @@ inline Napi::Value ConvertFunctionReturnToJS(Napi::Env env, void *returnBuffer,
                                  typeEncoding.c_str());
   }
 
+  // C function encodings are caller-specified (BOOL is documented as 'B'), so
+  // 'c' always means char here, even on x86_64 where ObjC BOOL is 'c'.
+  if (*simplified == 'c') {
+    return Napi::Number::New(env, *static_cast<char *>(returnBuffer));
+  }
+
   // Simple type
   return ConvertFFIReturnToJS(env, returnBuffer, typeEncoding.c_str());
 }

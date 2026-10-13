@@ -224,6 +224,12 @@ T ConvertToNativeValue(const Napi::Value &value,
     if (value.IsNull() || value.IsUndefined()) {
       return static_cast<T>(0);
     }
+    // char doubles as BOOL on x86_64, so accept booleans for it everywhere
+    if constexpr (std::is_same_v<T, char>) {
+      if (value.IsBoolean()) {
+        return value.As<Napi::Boolean>().Value() ? 1 : 0;
+      }
+    }
     if (value.IsNumber()) {
       return ConvertJSNumberToNativeValue<T>(value, context);
     } else if (value.IsBigInt()) {

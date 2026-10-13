@@ -77,6 +77,7 @@ The library automatically converts between JavaScript and Objective-C types:
 
 - **Strings**: JavaScript strings automatically convert to NSString
 - **Numbers**: JavaScript numbers work with NSInteger, CGFloat, etc.
+- **Booleans**: `BOOL` values convert to and from JavaScript booleans. On Intel Macs the runtime encodes `BOOL` as `char`, so `char` values (e.g. `charValue()`) are also returned as booleans there; `char` arguments accept both numbers and booleans
 - **Objects**: Objective-C objects are wrapped in `NobjcObject` instances
 - **Structs**: Plain JavaScript objects convert to C structs (CGRect, NSRange, etc.) — see [Structs](./structs.md)
 - **Blocks**: JavaScript functions automatically convert to Objective-C blocks — see [Blocks](./blocks.md)

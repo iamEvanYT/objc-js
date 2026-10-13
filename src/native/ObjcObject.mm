@@ -74,12 +74,14 @@ static inline uintptr_t JSValueToRegister(Napi::Env env,
       bool b = ConvertToNativeValue<bool>(value, context);
       return static_cast<uintptr_t>(b ? 1 : 0);
     }
+    // Signed types narrower than 32 bits must be sign-extended by the caller
+    // (Apple arm64 and x86_64 ABIs), otherwise e.g. char -5 arrives as 251.
     case 'c': return static_cast<uintptr_t>(
-                   static_cast<unsigned char>(ConvertToNativeValue<char>(value, context)));
+                   static_cast<intptr_t>(ConvertToNativeValue<char>(value, context)));
     case 'i': return static_cast<uintptr_t>(
                    static_cast<unsigned int>(ConvertToNativeValue<int>(value, context)));
     case 's': return static_cast<uintptr_t>(
-                   static_cast<unsigned short>(ConvertToNativeValue<short>(value, context)));
+                   static_cast<intptr_t>(ConvertToNativeValue<short>(value, context)));
     case 'l': return static_cast<uintptr_t>(
                    static_cast<unsigned long>(ConvertToNativeValue<long>(value, context)));
     case 'q': return static_cast<uintptr_t>(ConvertToNativeValue<long long>(value, context));
@@ -110,8 +112,9 @@ static inline Napi::Value RegisterToJSValue(Napi::Env env, uintptr_t raw,
       if (sel == nullptr) return env.Null();
       return Napi::String::New(env, sel_getName(sel));
     }
-    case 'B': return Napi::Boolean::New(env, raw != 0);
-    case 'c': return Napi::Number::New(env, static_cast<double>(static_cast<char>(raw)));
+    // Only the low byte of a bool/char return register is defined
+    case 'B': return Napi::Boolean::New(env, static_cast<unsigned char>(raw) != 0);
+    case 'c': return NumericToJS(env, static_cast<char>(raw));
     case 'i': return Napi::Number::New(env, static_cast<double>(static_cast<int>(raw)));
     case 's': return Napi::Number::New(env, static_cast<double>(static_cast<short>(raw)));
     case 'l': return Napi::Number::New(env, static_cast<double>(static_cast<long>(raw)));

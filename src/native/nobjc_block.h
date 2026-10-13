@@ -569,7 +569,13 @@ inline void SetBlockReturnFromJS(Napi::Value result, void *returnPtr,
   }
 
   switch (code) {
-    case 'c': { char v = static_cast<char>(result.As<Napi::Number>().Int32Value()); memcpy(returnPtr, &v, sizeof(v)); break; }
+    case 'c': {
+      // char doubles as BOOL on x86_64, so accept booleans too
+      char v = result.IsBoolean() ? (result.As<Napi::Boolean>().Value() ? 1 : 0)
+                                  : static_cast<char>(result.As<Napi::Number>().Int32Value());
+      memcpy(returnPtr, &v, sizeof(v));
+      break;
+    }
     case 'i': { int v = result.As<Napi::Number>().Int32Value(); memcpy(returnPtr, &v, sizeof(v)); break; }
     case 's': { short v = static_cast<short>(result.As<Napi::Number>().Int32Value()); memcpy(returnPtr, &v, sizeof(v)); break; }
     case 'l': { long v = static_cast<long>(result.As<Napi::Number>().Int64Value()); memcpy(returnPtr, &v, sizeof(v)); break; }
